@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Union
 
 from gotrue import AsyncMemoryStorage
 from gotrue.types import AuthChangeEvent, Session
-from httpx import AsyncClient, Timeout
+from httpx import Timeout
 from postgrest import (
     AsyncPostgrestClient,
 )
@@ -16,6 +16,7 @@ from storage3.constants import DEFAULT_TIMEOUT as DEFAULT_STORAGE_CLIENT_TIMEOUT
 from supafunc import AsyncFunctionsClient
 
 from ..lib.client_options import AsyncClientOptions as ClientOptions
+from ..lib.client_options import AsyncHttpxClient
 from .auth_client import AsyncSupabaseAuthClient
 
 
@@ -266,7 +267,7 @@ class AsyncClient:
         timeout: Union[int, float, Timeout] = DEFAULT_POSTGREST_CLIENT_TIMEOUT,
         verify: bool = True,
         proxy: Optional[str] = None,
-        client: Union[AsyncClient, None] = None,
+        client: Union[AsyncHttpxClient, None] = None,
     ) -> AsyncPostgrestClient:
         """Private helper for creating an instance of the Postgrest client."""
         return AsyncPostgrestClient(
