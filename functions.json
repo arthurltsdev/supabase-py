@@ -1,0 +1,380 @@
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "identificar_responsaveis_nao_cadastrados",
+        "description": "Identifica responsáveis presentes no extrato_pix que não estão cadastrados na tabela responsáveis",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function", 
+      "function": {
+        "name": "listar_responsaveis",
+        "description": "Lista responsáveis cadastrados com filtros opcionais",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "filtro_nome": {
+              "type": "string",
+              "description": "Filtrar pelo nome do responsável (busca parcial)"
+            },
+            "cpf": {
+              "type": "string", 
+              "description": "Filtrar pelo CPF do responsável"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_alunos",
+        "description": "Lista alunos com filtros opcionais",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "filtro_nome": {
+              "type": "string",
+              "description": "Filtrar pelo nome do aluno (busca parcial)"
+            },
+            "filtro_turma": {
+              "type": "string",
+              "description": "Filtrar pela turma do aluno"
+            },
+            "sem_dia_vencimento": {
+              "type": "boolean",
+              "description": "Se true, lista apenas alunos sem dia de vencimento definido"
+            },
+            "sem_data_matricula": {
+              "type": "boolean",
+              "description": "Se true, lista apenas alunos sem data de matrícula"
+            },
+            "sem_valor_mensalidade": {
+              "type": "boolean",
+              "description": "Se true, lista apenas alunos sem valor de mensalidade definido"
+            },
+            "id_aluno": {
+              "type": "string",
+              "description": "ID específico do aluno para busca exata"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_turmas",
+        "description": "Lista todas as turmas disponíveis",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "analisar_estatisticas_extrato",
+        "description": "Gera estatísticas completas do extrato PIX",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "cadastrar_responsavel_completo",
+        "description": "Cadastra um novo responsável",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "nome": {
+              "type": "string",
+              "description": "Nome completo do responsável"
+            },
+            "cpf": {
+              "type": "string",
+              "description": "CPF do responsável"
+            },
+            "telefone": {
+              "type": "string",
+              "description": "Telefone do responsável"
+            },
+            "email": {
+              "type": "string",
+              "description": "Email do responsável"
+            },
+            "endereco": {
+              "type": "string",
+              "description": "Endereço completo"
+            },
+            "tipo_relacao": {
+              "type": "string",
+              "description": "Tipo de relação (pai, mãe, avô, tio, etc.)"
+            }
+          },
+          "required": ["nome"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "buscar_aluno_por_nome",
+        "description": "Busca aluno por nome (busca parcial)",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "nome": {
+              "type": "string",
+              "description": "Nome ou parte do nome do aluno"
+            }
+          },
+          "required": ["nome"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "vincular_aluno_responsavel",
+        "description": "Vincula um aluno a um responsável",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_aluno": {
+              "type": "string",
+              "description": "ID do aluno"
+            },
+            "id_responsavel": {
+              "type": "string",
+              "description": "ID do responsável"
+            },
+            "responsavel_financeiro": {
+              "type": "boolean",
+              "description": "Se é responsável financeiro (default: true)"
+            },
+            "tipo_relacao": {
+              "type": "string",
+              "description": "Tipo de relação (pai, mãe, avô, tio, etc.)"
+            }
+          },
+          "required": ["id_aluno", "id_responsavel"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_pagamentos_nao_identificados",
+        "description": "Lista pagadores do extrato PIX que não foram identificados",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "limite": {
+              "type": "integer",
+              "description": "Número máximo de registros a retornar"
+            },
+            "formato_resumido": {
+              "type": "boolean",
+              "description": "Se true, retorna formato resumido para tomada de ações"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "processar_responsaveis_extrato_pix",
+        "description": "Processa responsáveis do extrato PIX, cadastrando os não identificados automaticamente",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "cadastrar_responsavel_e_vincular_aluno",
+        "description": "Cadastra um responsável e vincula automaticamente ao aluno especificado",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "nome_responsavel": {
+              "type": "string",
+              "description": "Nome completo do responsável"
+            },
+            "nome_aluno": {
+              "type": "string",
+              "description": "Nome do aluno para vincular ao responsável"
+            },
+            "cpf": {
+              "type": "string",
+              "description": "CPF do responsável"
+            },
+            "telefone": {
+              "type": "string",
+              "description": "Telefone do responsável"
+            },
+            "email": {
+              "type": "string",
+              "description": "Email do responsável"
+            },
+            "endereco": {
+              "type": "string",
+              "description": "Endereço completo"
+            },
+            "tipo_relacao": {
+              "type": "string",
+              "description": "Tipo de relação (pai, mãe, avô, tio, etc.)"
+            }
+          },
+          "required": ["nome_responsavel", "nome_aluno"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_registros_extrato_com_responsaveis_cadastrados",
+        "description": "Lista registros do extrato PIX cujos remetentes já estão cadastrados como responsáveis",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "limite": {
+              "type": "integer",
+              "description": "Número máximo de registros a retornar"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "registrar_pagamento",
+        "description": "Registra um pagamento na tabela pagamentos",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_responsavel": {
+              "type": "string",
+              "description": "ID do responsável pagador"
+            },
+            "id_aluno": {
+              "type": "string",
+              "description": "ID do aluno"
+            },
+            "data_pagamento": {
+              "type": "string",
+              "description": "Data do pagamento (DD/MM/YYYY ou YYYY-MM-DD)"
+            },
+            "valor": {
+              "type": "number",
+              "description": "Valor do pagamento"
+            },
+            "tipo_pagamento": {
+              "type": "string",
+              "description": "Tipo do pagamento (mensalidade, matrícula, material, etc.)"
+            },
+            "forma_pagamento": {
+              "type": "string",
+              "description": "Forma de pagamento (PIX, cartão, dinheiro, etc.)"
+            },
+            "descricao": {
+              "type": "string",
+              "description": "Descrição do pagamento"
+            }
+          },
+          "required": ["id_responsavel", "id_aluno", "data_pagamento", "valor", "tipo_pagamento", "forma_pagamento"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "buscar_responsavel_por_nome",
+        "description": "Busca responsável por nome exato",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "nome": {
+              "type": "string",
+              "description": "Nome exato do responsável"
+            }
+          },
+          "required": ["nome"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "atualizar_responsaveis_extrato_por_nome",
+        "description": "Atualiza/sobrescreve a coluna id_responsavel em extrato_pix com base na correspondência exata entre nome_remetente e nomes já cadastrados em responsáveis. Corrige registros inseridos incorretamente.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_pagamentos_por_responsavel_ordenados",
+        "description": "Lista pagamentos do extrato_pix por responsável cadastrado, ordenados por data (mais antigo primeiro). Permite filtrar por status.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "status_filtro": {
+              "type": "string",
+              "description": "Filtrar por status ('novo', 'registrado', etc.). Default: 'novo'"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "remover_aluno",
+        "description": "Remove um aluno do sistema e opcionalmente seus responsáveis vinculados",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_aluno": {
+              "type": "string",
+              "description": "ID do aluno a ser removido"
+            },
+            "remover_responsaveis_vinculados": {
+              "type": "boolean",
+              "description": "Se true, remove também os responsáveis vinculados ao aluno"
+            }
+          },
+          "required": ["id_aluno"]
+        }
+      }
+    }
+  ]
+} 

@@ -15,11 +15,11 @@ TABELAS_DESEJADAS = {
     "alunos",
     "alunos_responsaveis",
     "responsaveis",
-
     "turmas",
     "mensalidades",
     "pagamentos",
-    "pagamentos_itens"
+    "pagamentos_itens", 
+    "extrato_pix"
 }
 
 def match_tabela_fk(nome_coluna, tabelas):
