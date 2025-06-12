@@ -13,7 +13,7 @@
       }
     },
     {
-      "type": "function", 
+      "type": "function",
       "function": {
         "name": "listar_responsaveis",
         "description": "Lista responsáveis cadastrados com filtros opcionais",
@@ -25,7 +25,7 @@
               "description": "Filtrar pelo nome do responsável (busca parcial)"
             },
             "cpf": {
-              "type": "string", 
+              "type": "string",
               "description": "Filtrar pelo CPF do responsável"
             }
           },
@@ -305,7 +305,14 @@
               "description": "Descrição do pagamento"
             }
           },
-          "required": ["id_responsavel", "id_aluno", "data_pagamento", "valor", "tipo_pagamento", "forma_pagamento"]
+          "required": [
+            "id_responsavel",
+            "id_aluno",
+            "data_pagamento",
+            "valor",
+            "tipo_pagamento",
+            "forma_pagamento"
+          ]
         }
       }
     },
@@ -330,7 +337,7 @@
       "type": "function",
       "function": {
         "name": "atualizar_responsaveis_extrato_por_nome",
-        "description": "Atualiza/sobrescreve a coluna id_responsavel em extrato_pix com base na correspondência exata entre nome_remetente e nomes já cadastrados em responsáveis. Corrige registros inseridos incorretamente.",
+        "description": "Atualiza/sobrescreve a coluna id_responsavel em extrato_pix com base na correspondência inteligente entre nome_remetente e nomes já cadastrados em responsáveis. Usa algoritmo avançado de similaridade para melhor identificação. Corrige registros inseridos incorretamente.",
         "parameters": {
           "type": "object",
           "properties": {},
@@ -375,6 +382,418 @@
           "required": ["id_aluno"]
         }
       }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "analisar_nomes_nao_identificados_detalhado",
+        "description": "Gera análise detalhada dos nomes não identificados no extrato PIX, categorizando os motivos das falhas (acentos, prefixos, truncamento, etc.) e fornecendo recomendações específicas para cada caso",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "atualizar_campo_aluno",
+        "description": "Atualiza um campo específico de um aluno",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_aluno": {
+              "type": "string",
+              "description": "ID do aluno"
+            },
+            "campo": {
+              "type": "string",
+              "description": "Nome do campo a ser atualizado (nome, turma, data_nascimento, dia_vencimento, valor_mensalidade, data_matricula, turno, observacoes)"
+            },
+            "valor": {
+              "type": "string",
+              "description": "Novo valor para o campo"
+            }
+          },
+          "required": ["id_aluno", "campo", "valor"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "atualizar_campo_responsavel",
+        "description": "Atualiza um campo específico de um responsável",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_responsavel": {
+              "type": "string",
+              "description": "ID do responsável"
+            },
+            "campo": {
+              "type": "string",
+              "description": "Nome do campo a ser atualizado (nome, cpf, telefone, email, endereco, tipo_relacao, observacoes)"
+            },
+            "valor": {
+              "type": "string",
+              "description": "Novo valor para o campo"
+            }
+          },
+          "required": ["id_responsavel", "campo", "valor"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "consultar_extrato_pix_com_filtros",
+        "description": "Consulta extrato PIX com filtros avançados de data e responsável, incluindo agrupamento por responsável",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "limite": {
+              "type": "integer",
+              "description": "Número máximo de registros a retornar"
+            },
+            "data_inicio": {
+              "type": "string",
+              "description": "Data início no formato YYYY-MM-DD ou DD/MM/YYYY"
+            },
+            "data_fim": {
+              "type": "string",
+              "description": "Data fim no formato YYYY-MM-DD ou DD/MM/YYYY"
+            },
+            "apenas_com_responsavel": {
+              "type": "boolean",
+              "description": "Se true, retorna apenas registros com responsável cadastrado"
+            },
+            "apenas_sem_responsavel": {
+              "type": "boolean",
+              "description": "Se true, retorna apenas registros sem responsável cadastrado"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_alunos_elegiveis_mensalidades",
+        "description": "Lista alunos elegíveis para geração de mensalidades. Critérios: possui dia_vencimento, data_matricula, valor_mensalidade, responsável financeiro único, pagamento de matrícula registrado, e ainda não teve mensalidades geradas",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "gerar_mensalidades_aluno",
+        "description": "Gera mensalidades para um aluno específico. Pode receber período específico ou lista de meses. Atualiza o campo mensalidades_geradas para TRUE",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_aluno": {
+              "type": "string",
+              "description": "ID do aluno para gerar mensalidades"
+            },
+            "periodo_inicio": {
+              "type": "string",
+              "description": "Data de início no formato DD/MM/YYYY (opcional, padrão: 01/01/ano_atual)"
+            },
+            "periodo_fim": {
+              "type": "string",
+              "description": "Data de fim no formato DD/MM/YYYY (opcional, padrão: 31/12/ano_atual)"
+            },
+            "meses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Lista de meses específicos (ex: ['janeiro', 'fevereiro', 'março']) - substitui período se fornecido"
+            }
+          },
+          "required": ["id_aluno"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "gerar_mensalidades_massa",
+        "description": "Gera mensalidades para todos os alunos elegíveis em massa. Processa automaticamente todos os alunos que atendem aos critérios",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "periodo_inicio": {
+              "type": "string",
+              "description": "Data de início no formato DD/MM/YYYY (opcional, padrão: 01/01/ano_atual)"
+            },
+            "periodo_fim": {
+              "type": "string",
+              "description": "Data de fim no formato DD/MM/YYYY (opcional, padrão: 31/12/ano_atual)"
+            },
+            "meses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Lista de meses específicos (ex: ['janeiro', 'fevereiro', 'março']) - substitui período se fornecido"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "registrar_pagamento_mensalidade",
+        "description": "Registra pagamento de uma mensalidade específica. Atualiza tanto a tabela pagamentos quanto mensalidades com referência cruzada",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_mensalidade": {
+              "type": "string",
+              "description": "ID da mensalidade a ser paga"
+            },
+            "id_responsavel": {
+              "type": "string",
+              "description": "ID do responsável que está pagando"
+            },
+            "data_pagamento": {
+              "type": "string",
+              "description": "Data do pagamento (DD/MM/YYYY ou YYYY-MM-DD)"
+            },
+            "valor_pago": {
+              "type": "number",
+              "description": "Valor pago (pode ser diferente do valor da mensalidade para pagamentos parciais)"
+            },
+            "forma_pagamento": {
+              "type": "string",
+              "description": "Forma de pagamento (PIX, cartão, dinheiro, etc.)"
+            },
+            "descricao": {
+              "type": "string",
+              "description": "Descrição adicional do pagamento (opcional)"
+            }
+          },
+          "required": [
+            "id_mensalidade",
+            "id_responsavel",
+            "data_pagamento",
+            "valor_pago",
+            "forma_pagamento"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_mensalidades_por_aluno",
+        "description": "Lista mensalidades de um aluno específico, opcionalmente filtradas por status",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_aluno": {
+              "type": "string",
+              "description": "ID do aluno"
+            },
+            "status": {
+              "type": "string",
+              "description": "Filtrar por status específico (A vencer, Vencida, Pago, Pago parcial, Cancelada)"
+            }
+          },
+          "required": ["id_aluno"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_mensalidades_por_status",
+        "description": "Lista mensalidades por status com informações de aluno e responsável",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "description": "Status das mensalidades (A vencer, Vencida, Pago, Pago parcial, Cancelada)"
+            },
+            "limite": {
+              "type": "integer",
+              "description": "Número máximo de registros a retornar"
+            }
+          },
+          "required": ["status"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_mensalidades_vencidas",
+        "description": "Lista mensalidades vencidas com informações de aluno, responsável e dias de atraso. Permite filtrar por número de dias vencidos",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "dias_vencimento": {
+              "type": "integer",
+              "description": "Filtrar por quantidade de dias de vencimento (opcional). Ex: 30 = apenas mensalidades vencidas nos últimos 30 dias"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "atualizar_status_mensalidade",
+        "description": "Atualiza o status de uma mensalidade específica",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_mensalidade": {
+              "type": "string",
+              "description": "ID da mensalidade"
+            },
+            "novo_status": {
+              "type": "string",
+              "description": "Novo status (A vencer, Vencida, Pago, Pago parcial, Cancelada)"
+            }
+          },
+          "required": ["id_mensalidade", "novo_status"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "cancelar_mensalidade",
+        "description": "Cancela uma mensalidade, atualizando seu status para Cancelada e adicionando observações com motivo",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_mensalidade": {
+              "type": "string",
+              "description": "ID da mensalidade a ser cancelada"
+            },
+            "motivo": {
+              "type": "string",
+              "description": "Motivo do cancelamento (opcional)"
+            }
+          },
+          "required": ["id_mensalidade"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "relatorio_inadimplencia",
+        "description": "Gera relatório completo de inadimplência com estatísticas detalhadas, agrupamento por aluno e faixas de atraso",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "turma": {
+              "type": "string",
+              "description": "Filtrar por turma específica (opcional)"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "verificar_mensalidades_pendentes",
+        "description": "Verifica mensalidades pendentes (a vencer e vencidas) de um aluno específico com cálculo de valor total",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_aluno": {
+              "type": "string",
+              "description": "ID do aluno"
+            }
+          },
+          "required": ["id_aluno"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "calcular_valor_total_mensalidades",
+        "description": "Calcula o valor total das mensalidades de um aluno, opcionalmente filtrado por status",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_aluno": {
+              "type": "string",
+              "description": "ID do aluno"
+            },
+            "status": {
+              "type": "string",
+              "description": "Filtrar por status específico (opcional)"
+            }
+          },
+          "required": ["id_aluno"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_mensalidades_periodo",
+        "description": "Lista mensalidades em um período específico de vencimento com valor total",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "data_inicio": {
+              "type": "string",
+              "description": "Data de início do período (DD/MM/YYYY ou YYYY-MM-DD)"
+            },
+            "data_fim": {
+              "type": "string",
+              "description": "Data de fim do período (DD/MM/YYYY ou YYYY-MM-DD)"
+            },
+            "status": {
+              "type": "string",
+              "description": "Filtrar por status específico (opcional)"
+            }
+          },
+          "required": ["data_inicio", "data_fim"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "listar_pagamentos_por_aluno",
+        "description": "Lista todos os pagamentos de um aluno específico com estatísticas detalhadas",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id_aluno": {
+              "type": "string",
+              "description": "ID do aluno para listar pagamentos"
+            },
+            "limite": {
+              "type": "integer",
+              "description": "Número máximo de registros a retornar (opcional)"
+            }
+          },
+          "required": ["id_aluno"]
+        }
+      }
     }
   ]
-} 
+}

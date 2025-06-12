@@ -81,11 +81,16 @@ def listar_extrato_pix_por_status(status: str = "novo",
         return {"success": False, "error": str(e)}
 
 def listar_extrato_com_sem_responsavel(data_inicio: Optional[str] = None,
-                                      data_fim: Optional[str] = None) -> Dict:
+                                      data_fim: Optional[str] = None,
+                                      filtro_turma: Optional[str] = None) -> Dict:
     """
     Lista registros separando COM e SEM responsável cadastrado
+    Com filtro opcional por turma e verificação automática de duplicados
     """
     try:
+        # PRIMEIRO: Executar verificação e correção de duplicados
+        correcao_resultado = verificar_e_corrigir_extrato_duplicado()
+        
         # Base query
         base_query = supabase.table("extrato_pix").select("""
             *,
@@ -103,6 +108,29 @@ def listar_extrato_com_sem_responsavel(data_inicio: Optional[str] = None,
         sem_responsavel = []
         
         for registro in response.data:
+            # Verificar filtro de turma se especificado
+            if filtro_turma:
+                id_responsavel = registro.get("id_responsavel")
+                if id_responsavel:
+                    # Buscar alunos vinculados ao responsável
+                    alunos_resp = supabase.table("alunos_responsaveis").select("""
+                        alunos!inner(
+                            turmas!inner(nome_turma)
+                        )
+                    """).eq("id_responsavel", id_responsavel).execute()
+                    
+                    # Verificar se algum aluno está na turma filtrada
+                    tem_aluno_na_turma = False
+                    if alunos_resp.data:
+                        for vinculo in alunos_resp.data:
+                            turma_aluno = vinculo["alunos"]["turmas"]["nome_turma"]
+                            if turma_aluno == filtro_turma:
+                                tem_aluno_na_turma = True
+                                break
+                    
+                    if not tem_aluno_na_turma:
+                        continue
+            
             if registro.get("id_responsavel") and registro.get("responsaveis"):
                 com_responsavel.append(registro)
             else:
@@ -114,7 +142,67 @@ def listar_extrato_com_sem_responsavel(data_inicio: Optional[str] = None,
             "sem_responsavel": sem_responsavel,
             "total_com": len(com_responsavel),
             "total_sem": len(sem_responsavel),
-            "total_geral": len(response.data)
+            "total_geral": len(response.data),
+            "filtro_turma": filtro_turma,
+            "correcoes_aplicadas": correcao_resultado.get("corrigidos", 0),
+            "detalhes_correcoes": correcao_resultado.get("detalhes", []) if correcao_resultado.get("success") else None
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def buscar_dados_completos_alunos_responsavel(id_responsavel: str) -> Dict:
+    """
+    Busca dados completos dos alunos vinculados ao responsável
+    Incluindo informações financeiras e da turma
+    """
+    try:
+        response = supabase.table("alunos_responsaveis").select("""
+            *,
+            alunos!inner(
+                id, nome, turno, data_nascimento, dia_vencimento, 
+                data_matricula, valor_mensalidade,
+                turmas!inner(nome_turma)
+            )
+        """).eq("id_responsavel", id_responsavel).execute()
+        
+        alunos = []
+        for vinculo in response.data:
+            aluno_data = vinculo["alunos"].copy()
+            aluno_data["tipo_relacao"] = vinculo.get("tipo_relacao")
+            aluno_data["responsavel_financeiro"] = vinculo.get("responsavel_financeiro", False)
+            aluno_data["id_vinculo"] = vinculo.get("id")
+            
+            # Formatar informações adicionais
+            aluno_data["turma_nome"] = aluno_data.get("turmas", {}).get("nome_turma", "N/A")
+            aluno_data["valor_mensalidade_fmt"] = f"R$ {aluno_data.get('valor_mensalidade', 0):.2f}"
+            aluno_data["dia_vencimento_fmt"] = f"Dia {aluno_data.get('dia_vencimento', 'N/A')}"
+            
+            alunos.append(aluno_data)
+        
+        return {
+            "success": True,
+            "alunos": alunos,
+            "count": len(alunos),
+            "tem_multiplos_alunos": len(alunos) > 1
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def listar_turmas_disponiveis() -> Dict:
+    """
+    Lista todas as turmas disponíveis para filtros
+    """
+    try:
+        response = supabase.table("turmas").select("nome_turma").order("nome_turma").execute()
+        
+        turmas = [turma["nome_turma"] for turma in response.data]
+        
+        return {
+            "success": True,
+            "turmas": turmas,
+            "count": len(turmas)
         }
         
     except Exception as e:
@@ -478,7 +566,6 @@ def registrar_pagamentos_multiplos_do_extrato(id_extrato: str,
                 "forma_pagamento": "PIX",
                 "descricao": pag_detalhe.get('observacoes') or descricao or f"Importado do extrato PIX (pagamento {i+1}/{len(pagamentos_detalhados)}) - {extrato.get('observacoes', '')}",
                 "origem_extrato": True,
-                "id_extrato_origem": id_extrato,
                 "inserted_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat()
             }
@@ -503,6 +590,33 @@ def registrar_pagamentos_multiplos_do_extrato(id_extrato: str,
             
             pagamentos_criados.append(pag_response.data[0])
             debug_log(f"      ✅ Pagamento {i+1} inserido com sucesso")
+            
+            # Se é mensalidade, atualizar status da mensalidade
+            if pag_detalhe.get('tipo_pagamento') == 'mensalidade' and pag_detalhe.get('id_mensalidade'):
+                debug_log(f"      📅 Atualizando status da mensalidade {pag_detalhe.get('id_mensalidade')}")
+                
+                # Determinar novo status baseado no valor pago
+                valor_mensalidade = float(pag_detalhe.get('valor'))
+                # Buscar valor original da mensalidade
+                mens_response = supabase.table("mensalidades").select("valor").eq("id_mensalidade", pag_detalhe.get('id_mensalidade')).execute()
+                
+                if mens_response.data:
+                    valor_original = float(mens_response.data[0]["valor"])
+                    novo_status = "Pago" if valor_mensalidade >= valor_original else "Pago parcial"
+                    
+                    mens_update = supabase.table("mensalidades").update({
+                        "status": novo_status,
+                        "id_pagamento": id_pagamento,
+                        "data_pagamento": extrato["data_pagamento"],
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id_mensalidade", pag_detalhe.get('id_mensalidade')).execute()
+                    
+                    if mens_update.data:
+                        debug_log(f"      ✅ Status da mensalidade atualizado para '{novo_status}'")
+                    else:
+                        debug_log(f"      ⚠️ Falha ao atualizar status da mensalidade")
+                else:
+                    debug_log(f"      ⚠️ Mensalidade não encontrada para atualização de status")
             
             # Se for matrícula, atualizar data_matricula do aluno
             if pag_detalhe.get('tipo_pagamento', '').lower() == 'matricula':
@@ -530,9 +644,6 @@ def registrar_pagamentos_multiplos_do_extrato(id_extrato: str,
             "status": "registrado",
             "id_responsavel": id_responsavel,
             "tipo_pagamento": tipos_resumo,  # Resumo dos tipos
-            "processamento_multiplo": True,
-            "total_pagamentos_gerados": len(pagamentos_detalhados),
-            "alunos_beneficiarios": alunos_resumo,
             "atualizado_em": datetime.now().isoformat()
         }
         
@@ -585,7 +696,8 @@ def registrar_pagamento_do_extrato(id_extrato: str,
                                   id_responsavel: str,
                                   id_aluno: str,
                                   tipo_pagamento: str,
-                                  descricao: Optional[str] = None) -> Dict:
+                                  descricao: Optional[str] = None,
+                                  id_mensalidade: Optional[str] = None) -> Dict:
     """
     Registra pagamento baseado em registro do extrato PIX com debugging detalhado
     
@@ -688,6 +800,8 @@ def registrar_pagamento_do_extrato(id_extrato: str,
         
         # 4. Se for matrícula, atualizar data_matricula do aluno
         matricula_atualizada = False
+        mensalidade_atualizada = False
+        
         if tipo_pagamento.lower() == "matricula":
             debug_log(f"🎓 ETAPA 4: Atualizando data_matricula do aluno (tipo: matricula)")
             debug_log(f"   📊 Atualizando aluno ID: {id_aluno}")
@@ -705,8 +819,39 @@ def registrar_pagamento_do_extrato(id_extrato: str,
                 debug_log(f"✅ Data de matrícula atualizada com sucesso")
             else:
                 debug_log(f"⚠️ AVISO: Falha ao atualizar data de matrícula")
+        elif tipo_pagamento.lower() == "mensalidade" and id_mensalidade:
+            debug_log(f"📅 ETAPA 4: Atualizando status da mensalidade {id_mensalidade}")
+            
+            # Buscar valor original da mensalidade
+            mens_response = supabase.table("mensalidades").select("valor").eq("id_mensalidade", id_mensalidade).execute()
+            
+            if mens_response.data:
+                valor_original = float(mens_response.data[0]["valor"])
+                valor_pago = float(extrato["valor"])
+                novo_status = "Pago" if valor_pago >= valor_original else "Pago parcial"
+                
+                debug_log(f"   📊 Valor original da mensalidade: R$ {valor_original:.2f}")
+                debug_log(f"   📊 Valor pago: R$ {valor_pago:.2f}")
+                debug_log(f"   📊 Novo status: {novo_status}")
+                
+                mens_update = supabase.table("mensalidades").update({
+                    "status": novo_status,
+                    "id_pagamento": id_pagamento,
+                    "data_pagamento": extrato["data_pagamento"],
+                    "updated_at": datetime.now().isoformat()
+                }).eq("id_mensalidade", id_mensalidade).execute()
+                
+                debug_log(f"   📊 Response UPDATE mensalidade: {len(mens_update.data) if mens_update.data else 0} registros atualizados")
+                mensalidade_atualizada = bool(mens_update.data)
+                
+                if mensalidade_atualizada:
+                    debug_log(f"✅ Status da mensalidade atualizado para '{novo_status}'")
+                else:
+                    debug_log(f"⚠️ AVISO: Falha ao atualizar status da mensalidade")
+            else:
+                debug_log(f"⚠️ AVISO: Mensalidade {id_mensalidade} não encontrada")
         else:
-            debug_log(f"ℹ️ Tipo não é matrícula ({tipo_pagamento}), pulando atualização do aluno")
+            debug_log(f"ℹ️ Tipo não requer atualizações especiais ({tipo_pagamento})")
         
         # 5. Atualizar status do extrato para "registrado"
         debug_log(f"📝 ETAPA 5: Atualizando status do extrato para 'registrado'")
@@ -731,6 +876,7 @@ def registrar_pagamento_do_extrato(id_extrato: str,
             "id_pagamento": id_pagamento,
             "extrato_atualizado": bool(extrato_update.data),
             "matricula_atualizada": matricula_atualizada,
+            "mensalidade_atualizada": mensalidade_atualizada,
             "message": f"Pagamento registrado como {tipo_pagamento}",
             "debug_info": debug_info,
             "dados_processados": {
@@ -738,7 +884,8 @@ def registrar_pagamento_do_extrato(id_extrato: str,
                 "pagamento": dados_pagamento,
                 "updates": {
                     "extrato": bool(extrato_update.data),
-                    "aluno": matricula_atualizada
+                    "aluno": matricula_atualizada,
+                    "mensalidade": mensalidade_atualizada
                 }
             }
         }
@@ -916,6 +1063,24 @@ def remover_vinculo_responsavel(id_vinculo: str) -> Dict:
 # 🗑️ FUNÇÕES DE REMOÇÃO
 # ==========================================================
 
+def ignorar_registro_extrato(id_extrato: str) -> Dict:
+    """
+    Marca um registro do extrato PIX como ignorado
+    """
+    try:
+        response = supabase.table("extrato_pix").update({
+            "status": "ignorado",
+            "atualizado_em": datetime.now().isoformat()
+        }).eq("id", id_extrato).execute()
+        
+        if response.data:
+            return {"success": True, "message": "Registro marcado como ignorado"}
+        else:
+            return {"success": False, "error": "Registro não encontrado"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 def remover_registro_extrato(id_extrato: str) -> Dict:
     """
     Remove um registro do extrato PIX
@@ -991,6 +1156,86 @@ def obter_estatisticas_extrato(data_inicio: Optional[str] = None,
 # 🔍 FUNÇÕES AUXILIARES
 # ==========================================================
 
+def listar_mensalidades_disponiveis_aluno(id_aluno: str) -> Dict:
+    """
+    Lista mensalidades disponíveis para pagamento de um aluno específico
+    (status "A vencer" ou "Vencida")
+    
+    Args:
+        id_aluno: ID do aluno
+        
+    Returns:
+        Dict com mensalidades disponíveis formatadas para seleção
+    """
+    try:
+        # Buscar mensalidades pendentes (A vencer, Vencida)
+        response = supabase.table("mensalidades").select("""
+            id_mensalidade, mes_referencia, valor, data_vencimento, status, observacoes
+        """).eq("id_aluno", id_aluno).in_("status", ["A vencer", "Vencida"]).order("data_vencimento").execute()
+        
+        if not response.data:
+            return {
+                "success": True,
+                "mensalidades": [],
+                "count": 0,
+                "message": "Nenhuma mensalidade pendente encontrada para este aluno"
+            }
+        
+        # Formatear mensalidades para exibição
+        from datetime import datetime
+        data_hoje = datetime.now().date()
+        
+        mensalidades_formatadas = []
+        for mensalidade in response.data:
+            data_vencimento = datetime.strptime(mensalidade["data_vencimento"], "%Y-%m-%d").date()
+            
+            # Calcular status real e dias de atraso/antecedência
+            if data_vencimento < data_hoje:
+                status_real = "Vencida"
+                dias_diferenca = (data_hoje - data_vencimento).days
+                status_texto = f"Vencida há {dias_diferenca} dias"
+            else:
+                status_real = "A vencer"
+                dias_diferenca = (data_vencimento - data_hoje).days
+                if dias_diferenca == 0:
+                    status_texto = "Vence hoje"
+                else:
+                    status_texto = f"Vence em {dias_diferenca} dias"
+            
+            # Formatar para exibição
+            mes_ref = mensalidade["mes_referencia"]
+            valor = mensalidade["valor"]
+            data_venc_fmt = data_vencimento.strftime("%d/%m/%Y")
+            
+            # Label para dropdown/seleção
+            label = f"{mes_ref} - R$ {valor:.2f} - {data_venc_fmt} ({status_texto})"
+            
+            mensalidade_formatada = {
+                "id_mensalidade": mensalidade["id_mensalidade"],
+                "mes_referencia": mes_ref,
+                "valor": valor,
+                "data_vencimento": mensalidade["data_vencimento"],
+                "data_vencimento_fmt": data_venc_fmt,
+                "status": mensalidade["status"],
+                "status_real": status_real,
+                "status_texto": status_texto,
+                "dias_diferenca": dias_diferenca,
+                "observacoes": mensalidade.get("observacoes"),
+                "label": label
+            }
+            
+            mensalidades_formatadas.append(mensalidade_formatada)
+        
+        return {
+            "success": True,
+            "mensalidades": mensalidades_formatadas,
+            "count": len(mensalidades_formatadas),
+            "message": f"Encontradas {len(mensalidades_formatadas)} mensalidades pendentes"
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 def verificar_responsavel_existe(nome: str) -> Dict:
     """
     Verifica se responsável já existe pelo nome
@@ -1006,6 +1251,166 @@ def verificar_responsavel_existe(nome: str) -> Dict:
         
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+# ==========================================================
+# 🔍 FUNÇÕES DE VERIFICAÇÃO E CORREÇÃO
+# ==========================================================
+
+def verificar_e_corrigir_extrato_duplicado() -> Dict:
+    """
+    Verifica registros do extrato_pix que já foram processados mas ainda 
+    aparecem como 'novo' e corrige o status para 'registrado'
+    """
+    try:
+        # 1. Buscar todos os registros do extrato com status 'novo'
+        response_extrato = supabase.table("extrato_pix").select(
+            "id, nome_remetente, valor, data_pagamento, id_responsavel"
+        ).eq("status", "novo").execute()
+        
+        if not response_extrato.data:
+            return {
+                "success": True,
+                "message": "Nenhum registro 'novo' encontrado no extrato",
+                "corrigidos": 0,
+                "detalhes": []
+            }
+        
+        registros_extrato = response_extrato.data
+        corrigidos = []
+        
+        # 2. Para cada registro do extrato, verificar se já existe pagamento
+        for registro in registros_extrato:
+            # Buscar pagamentos com mesmos dados básicos
+            response_pagamentos = supabase.table("pagamentos").select(
+                "id_pagamento, id_responsavel, valor, data_pagamento, origem_extrato, id_extrato_origem"
+            ).eq("valor", registro["valor"]).eq("data_pagamento", registro["data_pagamento"]).execute()
+            
+            if response_pagamentos.data:
+                # Verificar se algum pagamento corresponde ao registro do extrato
+                for pagamento in response_pagamentos.data:
+                    # Critério 1: Mesmo responsável, valor e data
+                    if (pagamento.get("id_responsavel") == registro.get("id_responsavel") and
+                        float(pagamento.get("valor", 0)) == float(registro.get("valor", 0)) and
+                        pagamento.get("data_pagamento") == registro.get("data_pagamento")):
+                        
+                        # Critério 2: Se tem origem_extrato=True, é quase certeza que é duplicado
+                        eh_duplicado = pagamento.get("origem_extrato", False)
+                        
+                        # Critério 3: Se id_extrato_origem bate, é definitivamente duplicado
+                        if pagamento.get("id_extrato_origem") == registro["id"]:
+                            eh_duplicado = True
+                        
+                        if eh_duplicado:
+                            # Atualizar status do extrato para 'registrado'
+                            update_response = supabase.table("extrato_pix").update({
+                                "status": "registrado",
+                                "atualizado_em": datetime.now().isoformat(),
+                                "observacoes_sistema": f"Corrigido automaticamente - já processado (pagamento {pagamento['id_pagamento']})"
+                            }).eq("id", registro["id"]).execute()
+                            
+                            if update_response.data:
+                                corrigidos.append({
+                                    "id_extrato": registro["id"],
+                                    "nome_remetente": registro["nome_remetente"],
+                                    "valor": registro["valor"],
+                                    "data_pagamento": registro["data_pagamento"],
+                                    "id_pagamento_encontrado": pagamento["id_pagamento"],
+                                    "motivo": "Origem extrato confirmada" if pagamento.get("origem_extrato") else "Dados coincidentes"
+                                })
+                            break
+        
+        return {
+            "success": True,
+            "message": f"{len(corrigidos)} registros corrigidos",
+            "corrigidos": len(corrigidos),
+            "detalhes": corrigidos,
+            "total_verificados": len(registros_extrato)
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "corrigidos": 0
+        }
+
+def verificar_consistencia_extrato_pagamentos(data_inicio: Optional[str] = None,
+                                            data_fim: Optional[str] = None) -> Dict:
+    """
+    Verifica a consistência entre registros do extrato e pagamentos
+    Retorna relatório detalhado de possíveis inconsistências
+    """
+    try:
+        # Query base para extrato
+        query_extrato = supabase.table("extrato_pix").select("*")
+        if data_inicio:
+            query_extrato = query_extrato.gte("data_pagamento", data_inicio)
+        if data_fim:
+            query_extrato = query_extrato.lte("data_pagamento", data_fim)
+        
+        response_extrato = query_extrato.execute()
+        
+        # Query base para pagamentos
+        query_pagamentos = supabase.table("pagamentos").select("*").eq("origem_extrato", True)
+        if data_inicio:
+            query_pagamentos = query_pagamentos.gte("data_pagamento", data_inicio)
+        if data_fim:
+            query_pagamentos = query_pagamentos.lte("data_pagamento", data_fim)
+            
+        response_pagamentos = query_pagamentos.execute()
+        
+        relatorio = {
+            "total_extrato": len(response_extrato.data),
+            "total_pagamentos_origem_extrato": len(response_pagamentos.data),
+            "status_extrato": {},
+            "inconsistencias": [],
+            "recomendacoes": []
+        }
+        
+        # Análise por status
+        for registro in response_extrato.data:
+            status = registro.get("status", "desconhecido")
+            if status not in relatorio["status_extrato"]:
+                relatorio["status_extrato"][status] = 0
+            relatorio["status_extrato"][status] += 1
+        
+        # Buscar inconsistências
+        for extrato in response_extrato.data:
+            if extrato.get("status") == "novo":
+                # Buscar pagamentos correspondentes
+                pagamentos_correspondentes = [
+                    p for p in response_pagamentos.data
+                    if (float(p.get("valor", 0)) == float(extrato.get("valor", 0)) and
+                        p.get("data_pagamento") == extrato.get("data_pagamento") and
+                        p.get("id_responsavel") == extrato.get("id_responsavel"))
+                ]
+                
+                if pagamentos_correspondentes:
+                    relatorio["inconsistencias"].append({
+                        "tipo": "extrato_novo_com_pagamento_existente",
+                        "id_extrato": extrato["id"],
+                        "nome_remetente": extrato.get("nome_remetente"),
+                        "valor": extrato.get("valor"),
+                        "data": extrato.get("data_pagamento"),
+                        "pagamentos_encontrados": [p["id_pagamento"] for p in pagamentos_correspondentes]
+                    })
+        
+        # Gerar recomendações
+        if relatorio["inconsistencias"]:
+            relatorio["recomendacoes"].append(
+                f"Execute verificar_e_corrigir_extrato_duplicado() para corrigir {len(relatorio['inconsistencias'])} inconsistências"
+            )
+        
+        return {
+            "success": True,
+            "relatorio": relatorio
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     print("🧪 Testando funções otimizadas...")
