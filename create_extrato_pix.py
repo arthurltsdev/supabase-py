@@ -1,117 +1,87 @@
-import os
+"""
+create_extrato_pix.py – v2025-06-12 (sem coluna nome_norm)
+Insere PIX no extrato_pix_novo com idOperacao como PK.
+CSV: dataEHora,chavesPix,idOperacao,origemDestinatario,valor
+"""
+
+import os, unicodedata
 import pandas as pd
-from supabase import create_client
 from dotenv import load_dotenv
+from supabase import create_client
 
-# Carrega as variáveis do .env
+# ─── Config ────────────────────────────────────────────────
 load_dotenv()
+sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-# Configurações do Supabase
-url = os.environ.get("SUPABASE_URL")
-key = os.environ.get("SUPABASE_KEY")
-supabase = create_client(url, key)
+CSV_PATH   = "pix_20-12-24_12-06-25_processados.csv"
+TABLE_NAME = "extrato_pix_novo"
+BATCH      = 500          # lote de inserção
 
-# Carrega o arquivo CSV com separador correto
-df = pd.read_csv('pix_recebidos_04_06_a_11_06.csv', sep=';')
+# ─── Helpers ───────────────────────────────────────────────
+def normalize(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    txt = unicodedata.normalize("NFD", text)
+    txt = "".join(c for c in txt if unicodedata.category(c) != "Mn")
+    return " ".join(t for t in txt.lower().split()
+                    if t not in {"de", "da", "do", "dos", "das"})
 
-# Selecionar e renomear apenas as colunas necessárias
-df = df[['origemDestinatario', 'dataEHora', 'chavesPix', 'idOperacao', 'valor', 'lancamento']].copy()
-df.columns = ['nome_remetente', 'data_pagamento', 'chave_pix', 'idOperacao', 'valor', 'observacoes']
+def load_csv(path: str) -> pd.DataFrame:
+    df = (pd.read_csv(path, sep=",", dtype={"valor": "float"})
+            .rename(columns={
+                "origemDestinatario": "nome_remetente",
+                "dataEHora"        : "data_pagamento",
+                "chavesPix"        : "chave_pix",
+                "idOperacao"       : "id"
+            })
+            .assign(
+                nome_remetente=lambda d: d["nome_remetente"].map(normalize),
+                data_pagamento=lambda d: pd.to_datetime(
+                    d["data_pagamento"], dayfirst=True
+                ).dt.date.astype(str),
+                chave_pix      = lambda d: d["chave_pix"].fillna(""),
+                status         = "novo",
+                id_responsavel = None,
+                id_aluno       = None,
+                tipo_pagamento = None,
+                parcelas_identificadas = None,
+                observacoes    = ""
+            )
+          )
 
-# As datas já estão no formato YYYY-MM-DD, apenas garantir que seja string
-df['data_pagamento'] = df['data_pagamento'].astype(str)
+    df["observacoes"] = df["observacoes"].astype(str).str[:5000]
+    return df.drop_duplicates(subset="id")
 
-# Preencher valores nulos na coluna chave_pix com string vazia
-df['chave_pix'] = df['chave_pix'].fillna('').astype(str)
+def chunk(seq, size):
+    for i in range(0, len(seq), size):
+        yield seq[i:i+size]
 
-# Adicionar colunas adicionais com valores padrão
-df['status'] = 'novo'
-df['id_responsavel'] = None
-df['id_aluno'] = None
-df['tipo_pagamento'] = None
-df['parcelas_identificadas'] = None
+# ─── Main ──────────────────────────────────────────────────
+def main():
+    df = load_csv(CSV_PATH)
+    print(f"📊 CSV lido: {len(df)} linhas únicas")
 
-# Limitar observacoes a 5000 caracteres
-df['observacoes'] = df['observacoes'].astype(str).str[:5000]
+    # evita duplicar se rodar novamente
+    ids_exist = {r["id"] for r in sb.table(TABLE_NAME)
+                                   .select("id").execute().data}
+    df = df[~df["id"].isin(ids_exist)]
+    print(f"➕ Novos registros a inserir: {len(df)}")
 
-print(f"📊 Processando {len(df)} registros do CSV...")
+    inserted = errors = 0
+    for lote in chunk(df.to_dict("records"), BATCH):
+        try:
+            sb.table(TABLE_NAME).upsert(lote, on_conflict="id").execute()
+            inserted += len(lote)
+        except Exception as e:
+            errors += len(lote)
+            print(f"❌ Falha em lote ({len(lote)}): {e}")
 
-# ✅ VERIFICAÇÃO DE DUPLICATAS
-print("🔍 Verificando registros já existentes na base de dados...")
+    print("\n" + "="*50)
+    print(f"Total no CSV        : {len(df) + len(ids_exist)}")
+    print(f"Já existiam na base : {len(ids_exist)}")
+    print(f"Inseridos agora     : {inserted}")
+    print(f"Erros               : {errors}")
+    print("🎉  Importação concluída")
 
-# Buscar todos os IDs existentes na tabela extrato_pix
-try:
-    registros_existentes = supabase.table('extrato_pix').select('id').execute()
-    ids_existentes = {registro['id'] for registro in registros_existentes.data}
-    print(f"📋 Encontrados {len(ids_existentes)} registros existentes na base")
-except Exception as e:
-    print(f"⚠️ Erro ao verificar registros existentes: {e}")
-    ids_existentes = set()
-
-# Contadores
-inseridos = 0
-duplicatas = 0
-erros = 0
-
-# Inserir dados no Supabase com verificação de duplicatas
-for index, row in df.iterrows():
-    id_operacao = row['idOperacao']
-    
-    # ✅ Verificar se já existe
-    if id_operacao in ids_existentes:
-        duplicatas += 1
-        if duplicatas <= 5:  # Mostrar apenas os primeiros 5
-            print(f"⚠️ Duplicata ignorada: {row['nome_remetente']} - ID: {id_operacao}")
-        elif duplicatas == 6:
-            print(f"... (mais {len(df) - index - 1} duplicatas serão ignoradas silenciosamente)")
-        continue
-    
-    data = {
-        'id': id_operacao,  # Usar idOperacao como id
-        'nome_remetente': row['nome_remetente'],
-        'data_pagamento': row['data_pagamento'],
-        'chave_pix': row['chave_pix'],
-        'valor': row['valor'],
-        'status': row['status'],
-        'id_responsavel': row['id_responsavel'],
-        'id_aluno': row['id_aluno'],
-        'tipo_pagamento': row['tipo_pagamento'],
-        'parcelas_identificadas': row['parcelas_identificadas'],
-        'observacoes': row['observacoes']
-    }
-    
-    try:
-        resultado = supabase.table('extrato_pix').insert(data).execute()
-        inseridos += 1
-        if inseridos <= 50:  # Mostrar apenas os primeiros 5
-            print(f"✅ Inserido: {row['nome_remetente']} - {row['data_pagamento']} - R${row['valor']}")
-        elif inseridos == 51:
-            print("... (continuando inserções em segundo plano)")
-        
-        # Adicionar à lista de existentes para próximas verificações
-        ids_existentes.add(id_operacao)
-        
-    except Exception as e:
-        erros += 1
-        if erros <= 30:  # Mostrar apenas os primeiros 3 erros
-            print(f"❌ Erro ao inserir registro {index + 1} (ID: {id_operacao}): {e}")
-
-# 📊 RELATÓRIO FINAL
-print("\n" + "="*60)
-print("📊 RELATÓRIO FINAL DE INSERÇÃO")
-print("="*60)
-print(f"📁 Registros no CSV: {len(df)}")
-print(f"✅ Registros inseridos: {inseridos}")
-print(f"⚠️ Duplicatas ignoradas: {duplicatas}")
-print(f"❌ Erros encontrados: {erros}")
-print(f"📋 Total na base após inserção: {len(ids_existentes)}")
-
-if duplicatas > 0:
-    print(f"\n💡 IMPORTANTE: {duplicatas} registros já existiam na base de dados")
-    print("   (baseado no campo idOperacao). Isso é normal e esperado!")
-
-if erros > 0:
-    print(f"\n⚠️ ATENÇÃO: {erros} registros apresentaram erros durante a inserção")
-    print("   Verifique os detalhes acima para mais informações")
-
-print("\n🎉 Processamento concluído!") 
+if __name__ == "__main__":
+    main()

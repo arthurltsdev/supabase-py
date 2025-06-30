@@ -27,6 +27,8 @@ from funcoes_extrato_otimizadas import (
     buscar_dados_completos_alunos_responsavel,
     listar_turmas_disponiveis,
     cadastrar_responsavel_e_vincular,
+    cadastrar_aluno_e_vincular,
+    buscar_responsaveis_para_dropdown,
     registrar_pagamento_do_extrato,
     registrar_pagamentos_multiplos_do_extrato,
     atualizar_aluno_campos,
@@ -36,6 +38,8 @@ from funcoes_extrato_otimizadas import (
     ignorar_registro_extrato,
     verificar_e_corrigir_extrato_duplicado,
     verificar_consistencia_extrato_pagamentos,
+    atualizar_responsaveis_extrato_pix,
+    corrigir_status_extrato_com_pagamentos,
     supabase
 )
 
@@ -659,6 +663,125 @@ def mostrar_gestao_responsaveis_aluno(id_aluno: str, nome_aluno: str):
             st.session_state[f"show_add_resp_{id_aluno}"] = False
             st.rerun()
 
+def mostrar_formulario_cadastro_aluno():
+    """Formulário para cadastrar novo aluno com possibilidade de vincular responsável"""
+    with st.form("form_novo_aluno", clear_on_submit=True):
+        st.subheader("🎓 Cadastrar Novo Aluno")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            nome = st.text_input("Nome Completo*", key="aluno_nome")
+            
+            # Buscar turmas disponíveis
+            turmas_result = listar_turmas_disponiveis()
+            if turmas_result.get("success") and turmas_result.get("turmas"):
+                opcoes_turmas = ["Selecionar turma..."] + turmas_result["turmas"]
+                turma_selecionada = st.selectbox("Turma*", opcoes_turmas, key="aluno_turma")
+                
+                # Buscar ID da turma selecionada
+                id_turma_selecionada = None
+                if turma_selecionada != "Selecionar turma...":
+                    # Buscar ID da turma pelo nome
+                    turma_response = supabase.table("turmas").select("id").eq("nome_turma", turma_selecionada).execute()
+                    if turma_response.data:
+                        id_turma_selecionada = turma_response.data[0]["id"]
+            else:
+                st.error("❌ Erro ao carregar turmas")
+                return None
+            
+            turno = st.selectbox("Turno*", ["Matutino", "Vespertino", "Integral"], key="aluno_turno")
+            data_nascimento = st.date_input("Data de Nascimento", key="aluno_data_nasc")
+        
+        with col2:
+            dia_vencimento = st.selectbox("Dia de Vencimento", list(range(1, 32)), index=4, key="aluno_dia_venc")
+            valor_mensalidade = st.number_input("Valor da Mensalidade (R$)", min_value=0.0, step=10.0, key="aluno_valor_mens")
+            
+            st.markdown("**👤 Vincular a Responsável (Opcional)**")
+            
+            # Campo de busca de responsável
+            busca_responsavel = st.text_input("🔍 Digite o nome do responsável", key="busca_resp_aluno", placeholder="Digite para buscar...")
+            
+            responsavel_selecionado = None
+            if busca_responsavel and len(busca_responsavel.strip()) >= 2:
+                resultado_busca = buscar_responsaveis_para_dropdown(busca_responsavel.strip())
+                if resultado_busca.get("success") and resultado_busca.get("opcoes"):
+                    opcoes_resp = {op["label"]: op for op in resultado_busca["opcoes"]}
+                    
+                    if opcoes_resp:
+                        responsavel_escolhido = st.selectbox(
+                            f"Responsáveis encontrados ({len(opcoes_resp)}):",
+                            ["Não vincular"] + list(opcoes_resp.keys()),
+                            key="select_resp_aluno"
+                        )
+                        
+                        if responsavel_escolhido != "Não vincular":
+                            responsavel_selecionado = opcoes_resp[responsavel_escolhido]
+                    else:
+                        st.info("Nenhum responsável encontrado")
+                elif len(busca_responsavel.strip()) >= 2:
+                    st.info("Nenhum responsável encontrado com esse nome")
+            
+            # Tipo de relação se responsável selecionado
+            tipo_relacao = "pai"
+            responsavel_financeiro = True
+            if responsavel_selecionado:
+                tipo_relacao = st.selectbox(
+                    "Tipo de Relação*",
+                    ["pai", "mãe", "avô", "avó", "tio", "tia", "responsável legal", "outro"],
+                    key="tipo_relacao_aluno"
+                )
+                responsavel_financeiro = st.checkbox("É responsável financeiro", value=True, key="resp_financeiro_aluno")
+        
+        submitted = st.form_submit_button("🎓 Cadastrar Aluno", type="primary")
+        
+        if submitted:
+            # Validações
+            if not nome:
+                st.error("Nome é obrigatório!")
+                return None
+            
+            if turma_selecionada == "Selecionar turma..." or not id_turma_selecionada:
+                st.error("Selecione uma turma!")
+                return None
+            
+            # Preparar dados do aluno
+            dados_aluno = {
+                "nome": nome,
+                "id_turma": id_turma_selecionada,
+                "turno": turno,
+                "data_nascimento": data_nascimento.isoformat() if data_nascimento else None,
+                "dia_vencimento": str(dia_vencimento),
+                "valor_mensalidade": valor_mensalidade if valor_mensalidade > 0 else None
+            }
+            
+            # Cadastrar aluno
+            resultado = cadastrar_aluno_e_vincular(
+                dados_aluno=dados_aluno,
+                id_responsavel=responsavel_selecionado["id"] if responsavel_selecionado else None,
+                tipo_relacao=tipo_relacao,
+                responsavel_financeiro=responsavel_financeiro
+            )
+            
+            if resultado.get("success"):
+                # Mensagem de sucesso
+                st.success(f"✅ Aluno {nome} cadastrado com sucesso!")
+                
+                if resultado.get("vinculo_criado"):
+                    st.success(f"✅ Vinculado ao responsável: {resultado.get('nome_responsavel')}")
+                elif responsavel_selecionado and not resultado.get("vinculo_criado"):
+                    st.warning(f"⚠️ Aluno cadastrado, mas houve erro no vínculo: {resultado.get('vinculo_erro')}")
+                
+                # Mostrar informações do aluno criado
+                st.info(f"🆔 **ID do Aluno:** {resultado.get('id_aluno')}")
+                st.info(f"🎓 **Turma:** {turma_selecionada}")
+                st.info(f"🕐 **Turno:** {turno}")
+                
+                return resultado
+            else:
+                st.error(f"❌ Erro ao cadastrar aluno: {resultado.get('error')}")
+                return None
+
 # ==========================================================
 # 🎨 INTERFACE PRINCIPAL
 # ==========================================================
@@ -725,6 +848,123 @@ def main():
                 else:
                     st.error(f"❌ Erro na verificação: {resultado_verificacao.get('error')}")
         
+        # Botão para atualizar responsáveis
+        if st.button("👥 Atualizar Responsáveis", help="Identifica registros sem responsável e tenta associá-los automaticamente"):
+            with st.spinner("Analisando registros sem responsável..."):
+                resultado_responsaveis = atualizar_responsaveis_extrato_pix()
+                
+                if resultado_responsaveis.get("success"):
+                    atualizados = resultado_responsaveis.get("atualizados", 0)
+                    usou_nome_norm = resultado_responsaveis.get("usou_nome_norm", False)
+                    
+                    # Mostrar informação sobre normalização
+                    if usou_nome_norm:
+                        st.info("🔍 Usando campo 'nome_norm' para melhor correspondência!")
+                    else:
+                        st.warning("⚠️ Campo 'nome_norm' não encontrado - usando campo 'nome' padrão")
+                    
+                    if atualizados > 0:
+                        st.success(f"✅ {atualizados} registros atualizados com responsáveis!")
+                        
+                        # Mostrar correspondências encontradas
+                        correspondencias = resultado_responsaveis.get("correspondencias", [])
+                        if correspondencias:
+                            with st.expander(f"📋 Ver {len(correspondencias)} correspondências encontradas"):
+                                for correspondencia in correspondencias:
+                                    col1, col2, col3 = st.columns([3, 3, 2])
+                                    
+                                    with col1:
+                                        st.write(f"**Remetente:** {correspondencia['nome_remetente']}")
+                                    
+                                    with col2:
+                                        st.write(f"**Responsável:** {correspondencia['nome_responsavel']}")
+                                        if correspondencia.get('usado_nome_norm'):
+                                            st.write(f"*(comparado com: {correspondencia['nome_usado_comparacao']})*")
+                                    
+                                    with col3:
+                                        similaridade = correspondencia['similaridade']
+                                        cor = "🟢" if similaridade >= 95 else "🟡"
+                                        st.write(f"{cor} {similaridade:.1f}%")
+                                    
+                                    alunos_vinculados = correspondencia['alunos_vinculados']
+                                    id_aluno_preenchido = correspondencia['id_aluno_preenchido']
+                                    
+                                    if alunos_vinculados == 1:
+                                        st.info(f"   ✅ ID do aluno preenchido automaticamente ({alunos_vinculados} aluno vinculado)")
+                                    else:
+                                        st.info(f"   ⚠️ {alunos_vinculados} alunos vinculados - ID será preenchido no registro do pagamento")
+                                    
+                                    st.markdown("---")
+                        
+                        # Recarregar dados após atualização
+                        carregar_dados_extrato()
+                        st.rerun()
+                    else:
+                        st.info("ℹ️ Nenhum registro sem responsável encontrado ou sem correspondências válidas (>90%)")
+                        
+                        # Mostrar debug info se disponível
+                        debug_info = resultado_responsaveis.get("debug_info", [])
+                        if debug_info:
+                            with st.expander("📋 Ver detalhes da análise"):
+                                for debug_line in debug_info:
+                                    st.text(debug_line)
+                else:
+                    st.error(f"❌ Erro ao atualizar responsáveis: {resultado_responsaveis.get('error')}")
+        
+        # Botão para corrigir status dos registros
+        if st.button("🔧 Corrigir Status Extrato", help="Atualiza registros com pagamentos vinculados para status 'registrado'"):
+            with st.spinner("Corrigindo status dos registros..."):
+                resultado_correcao = corrigir_status_extrato_com_pagamentos()
+                
+                if resultado_correcao.get("success"):
+                    corrigidos = resultado_correcao.get("corrigidos", 0)
+                    total_analisados = resultado_correcao.get("total_analisados", 0)
+                    
+                    if corrigidos > 0:
+                        st.success(f"✅ {corrigidos} registros corrigidos de 'novo' para 'registrado'!")
+                        
+                        # Mostrar detalhes das correções
+                        detalhes = resultado_correcao.get("detalhes_correcoes", [])
+                        if detalhes:
+                            with st.expander(f"📋 Ver {len(detalhes)} correções aplicadas"):
+                                for detalhe in detalhes:
+                                    col1, col2, col3 = st.columns([3, 2, 2])
+                                    
+                                    with col1:
+                                        st.write(f"**{detalhe['nome_remetente']}**")
+                                        st.write(f"Data: {detalhe['data_pagamento']}")
+                                    
+                                    with col2:
+                                        st.write(f"Valor: R$ {detalhe['valor']:.2f}")
+                                        st.write(f"Extrato: {detalhe['id_extrato'][:8]}...")
+                                    
+                                    with col3:
+                                        st.write(f"Pagamentos: {detalhe['pagamentos_vinculados']}")
+                                        if detalhe.get('id_aluno'):
+                                            st.write("✅ ID aluno preenchido")
+                                        else:
+                                            st.write("⚠️ Múltiplos alunos")
+                                    
+                                    st.markdown("---")
+                        
+                        # Recarregar dados após correção
+                        carregar_dados_extrato()
+                        st.rerun()
+                    else:
+                        if total_analisados == 0:
+                            st.success("✅ Nenhum registro com status 'novo' encontrado!")
+                        else:
+                            st.info("ℹ️ Nenhum registro com pagamentos vinculados precisava de correção")
+                else:
+                    st.error(f"❌ Erro ao corrigir status: {resultado_correcao.get('error')}")
+                    
+                    # Mostrar logs de debug
+                    debug_info = resultado_correcao.get("debug_info", [])
+                    if debug_info:
+                        with st.expander("🔍 Ver detalhes do erro"):
+                            for debug_line in debug_info:
+                                st.text(debug_line)
+        
         # Estatísticas
         st.markdown("---")
         st.header("📊 Estatísticas")
@@ -753,12 +993,13 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
     
     # Tabs principais
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "✅ Pagamentos COM Responsável",
         "❓ Pagamentos SEM Responsável", 
         "👥 Gestão de Alunos/Responsáveis",
         "📋 Histórico",
-        "🔍 Consistência"
+        "🔍 Consistência",
+        "🔗 Vincular Responsáveis"
     ])
     
     # ==========================================================
@@ -1155,10 +1396,28 @@ def main():
                     with col2:
                         st.metric("📋 Total", len(registros_configurados))
                     
-                    # Detalhes
-                    for config in registros_configurados:
+                    # Detalhes melhorados
+                    st.markdown("### 📋 Detalhes dos Registros Selecionados")
+                    
+                    for i, config in enumerate(registros_configurados, 1):
+                        registro = config.get('registro', {})
+                        
                         if config.get('configuracao_simples'):
-                            st.write(f"• **Simples:** R$ {config['valor']:.2f} - {config['tipo_pagamento']}")
+                            responsavel_nome = registro.get('nome_remetente', 'N/A')
+                            data_pagamento = registro.get('data_pagamento', 'N/A')
+                            
+                            # Informações sobre mensalidade se aplicável
+                            info_mensalidade = ""
+                            if config.get('tipo_pagamento') == 'mensalidade' and config.get('mes_referencia'):
+                                info_mensalidade = f" ({config.get('mes_referencia')})"
+                            
+                            st.markdown(f"""
+                            **🚀 {i}. Processamento Rápido** - R$ {config['valor']:.2f}
+                            - 📅 **Data:** {data_pagamento}
+                            - 👤 **Responsável:** {responsavel_nome}
+                            - 💳 **Tipo:** {config['tipo_pagamento']}{info_mensalidade}
+                            - 🆔 **Extrato:** {config.get('id_extrato', 'N/A')[:8]}...
+                            """)
     
     # ==========================================================
     # TAB 2: PAGAMENTOS SEM RESPONSÁVEL
@@ -1258,8 +1517,41 @@ def main():
     with tab3:
         st.header("👥 Gestão de Alunos e Responsáveis")
         
-        # Busca de aluno melhorada
-        busca_aluno = st.text_input("🔍 Buscar aluno por nome", key="busca_gestao_aluno", placeholder="Digite pelo menos 2 caracteres...")
+        # Botões principais
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            # Busca de aluno melhorada
+            busca_aluno = st.text_input("🔍 Buscar aluno por nome", key="busca_gestao_aluno", placeholder="Digite pelo menos 2 caracteres...")
+        
+        with col2:
+            st.write("")  # Espaço para alinhar
+            if st.button("🎓 Cadastrar Novo Aluno", type="primary", key="btn_cadastrar_aluno"):
+                st.session_state.show_cadastro_aluno = True
+        
+        # Formulário de cadastro de aluno
+        if st.session_state.get('show_cadastro_aluno', False):
+            st.markdown("---")
+            resultado = mostrar_formulario_cadastro_aluno()
+            
+            if resultado:
+                # Sucesso no cadastro - limpar flag e recarregar busca
+                st.session_state.show_cadastro_aluno = False
+                # Atualizar lista de alunos se estava buscando
+                if busca_aluno:
+                    resultado_busca = buscar_alunos_para_dropdown(busca_aluno)
+                    if resultado_busca.get("success"):
+                        st.session_state.lista_alunos_gestao = resultado_busca.get("opcoes", [])
+                st.rerun()
+        
+        # Botão para fechar formulário de cadastro
+        if st.session_state.get('show_cadastro_aluno', False):
+            col1, col2 = st.columns([4, 1])
+            with col2:
+                if st.button("❌ Cancelar Cadastro", type="secondary"):
+                    st.session_state.show_cadastro_aluno = False
+                    st.rerun()
+            st.markdown("---")
         
         # Inicializar lista de alunos
         if 'lista_alunos_gestao' not in st.session_state:
@@ -1276,39 +1568,42 @@ def main():
             if resultado_busca.get("success"):
                 st.session_state.lista_alunos_gestao = resultado_busca.get("opcoes", [])
         
-        # Exibir lista de alunos encontrados
-        if st.session_state.lista_alunos_gestao:
-            # Selectbox com os alunos encontrados
-            opcoes_formatadas = ["Selecione um aluno..."] + [aluno["label"] for aluno in st.session_state.lista_alunos_gestao]
-            
-            aluno_escolhido = st.selectbox(
-                f"🎓 Alunos encontrados ({len(st.session_state.lista_alunos_gestao)}):",
-                options=opcoes_formatadas,
-                key="select_gestao_aluno"
-            )
-            
-            # Encontrar o aluno selecionado
-            aluno_selecionado = None
-            if aluno_escolhido != "Selecione um aluno...":
-                for aluno in st.session_state.lista_alunos_gestao:
-                    if aluno["label"] == aluno_escolhido:
-                        aluno_selecionado = aluno
-                        break
-            
-            if aluno_selecionado:
-                st.markdown("---")
+        # Exibir lista de alunos encontrados (apenas se não estiver mostrando cadastro)
+        if not st.session_state.get('show_cadastro_aluno', False):
+            if st.session_state.lista_alunos_gestao:
+                # Selectbox com os alunos encontrados
+                opcoes_formatadas = ["Selecione um aluno..."] + [aluno["label"] for aluno in st.session_state.lista_alunos_gestao]
                 
-                # Usar a nova função para mostrar informações editáveis
-                mostrar_informacoes_editaveis_aluno(aluno_selecionado)
-                
-                # Gestão de responsáveis
-                st.markdown("---")
-                mostrar_gestao_responsaveis_aluno(
-                    aluno_selecionado["id"], 
-                    aluno_selecionado["nome"]
+                aluno_escolhido = st.selectbox(
+                    f"🎓 Alunos encontrados ({len(st.session_state.lista_alunos_gestao)}):",
+                    options=opcoes_formatadas,
+                    key="select_gestao_aluno"
                 )
-        elif len(busca_aluno) >= 2:
-            st.info("Nenhum aluno encontrado com esse nome")
+                
+                # Encontrar o aluno selecionado
+                aluno_selecionado = None
+                if aluno_escolhido != "Selecione um aluno...":
+                    for aluno in st.session_state.lista_alunos_gestao:
+                        if aluno["label"] == aluno_escolhido:
+                            aluno_selecionado = aluno
+                            break
+                
+                if aluno_selecionado:
+                    st.markdown("---")
+                    
+                    # Usar a nova função para mostrar informações editáveis
+                    mostrar_informacoes_editaveis_aluno(aluno_selecionado)
+                    
+                    # Gestão de responsáveis
+                    st.markdown("---")
+                    mostrar_gestao_responsaveis_aluno(
+                        aluno_selecionado["id"], 
+                        aluno_selecionado["nome"]
+                    )
+            elif len(busca_aluno) >= 2:
+                st.info("Nenhum aluno encontrado com esse nome")
+            elif len(busca_aluno) == 0:
+                st.info("🔍 Digite o nome de um aluno para buscar ou clique em 'Cadastrar Novo Aluno' para adicionar um novo aluno.")
     
     # ==========================================================
     # TAB 4: HISTÓRICO
@@ -1458,6 +1753,382 @@ def main():
             4. Expanda os detalhes para ver logs completos
             5. Exporte o histórico para análise posterior
             """)
+        # ==========================================================
+    # TAB 5: CONSISTÊNCIA
+    # ==========================================================
+    with tab5:
+        st.header("🔍 Verificação de Consistência")
+        st.markdown("Ferramentas para verificar e corrigir inconsistências entre extrato PIX e pagamentos registrados.")
+        
+        # Controles de período
+        col1, col2, col3 = st.columns([2, 2, 1])
+        
+        with col1:
+            data_inicio_consist = st.date_input(
+                "📅 Data Início",
+                value=st.session_state.filtro_data_inicio,
+                key="consist_inicio"
+            )
+        
+        with col2:
+            data_fim_consist = st.date_input(
+                "📅 Data Fim", 
+                value=st.session_state.filtro_data_fim,
+                key="consist_fim"
+            )
+        
+        with col3:
+            st.write(" ")  # Espaço
+            if st.button("🔍 Executar Verificação", type="primary"):
+                st.session_state.executar_verificacao = True
+        
+        # Executar verificação se solicitado
+        if st.session_state.get('executar_verificacao', False):
+            st.session_state.executar_verificacao = False  # Reset flag
+            
+            with st.spinner("🔍 Analisando consistência..."):
+                # 1. Relatório de consistência
+                resultado_consistencia = verificar_consistencia_extrato_pagamentos(
+                    data_inicio_consist.strftime("%Y-%m-%d"),
+                    data_fim_consist.strftime("%Y-%m-%d")
+                )
+                
+                if resultado_consistencia.get("success"):
+                    relatorio = resultado_consistencia["relatorio"]
+                    
+                    # Métricas principais
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("📊 Total Extrato", relatorio["total_extrato"])
+                    
+                    with col2:
+                        st.metric("💳 Pagamentos (Origem Extrato)", relatorio["total_pagamentos_origem_extrato"])
+                    
+                    with col3:
+                        inconsistencias = len(relatorio["inconsistencias"])
+                        st.metric("⚠️ Inconsistências", inconsistencias, delta="Problema" if inconsistencias > 0 else "OK")
+                    
+                    with col4:
+                        novos = relatorio["status_extrato"].get("novo", 0)
+                        st.metric("🆕 Status 'Novo'", novos)
+                    
+                    # Status breakdown
+                    st.subheader("📊 Distribuição por Status")
+                    
+                    if relatorio["status_extrato"]:
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            for status, count in relatorio["status_extrato"].items():
+                                emoji = "🆕" if status == "novo" else "✅" if status == "registrado" else "🚫" if status == "ignorado" else "❓"
+                                st.write(f"{emoji} **{status.title()}:** {count} registros")
+                        
+                        with col2:
+                            # Gráfico de pizza para status
+                            if len(relatorio["status_extrato"]) > 1:
+                                df_status = pd.DataFrame(
+                                    list(relatorio["status_extrato"].items()),
+                                    columns=["Status", "Quantidade"]
+                                )
+                                
+                                fig = px.pie(
+                                    df_status, 
+                                    values="Quantidade", 
+                                    names="Status",
+                                    title="Distribuição de Status",
+                                    color_discrete_map={
+                                        "novo": "#ff7f0e",
+                                        "registrado": "#2ca02c", 
+                                        "ignorado": "#d62728"
+                                    }
+                                )
+                                fig.update_layout(height=300)
+                                st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Inconsistências encontradas
+                    if relatorio["inconsistencias"]:
+                        st.subheader("⚠️ Inconsistências Encontradas")
+                        st.error(f"Foram encontradas {len(relatorio['inconsistencias'])} inconsistências que precisam ser corrigidas.")
+                        
+                        # Mostrar detalhes das inconsistências
+                        for i, inconsistencia in enumerate(relatorio["inconsistencias"]):
+                            with st.expander(f"❌ Inconsistência {i+1}: {inconsistencia['nome_remetente']} - R$ {inconsistencia['valor']:.2f}"):
+                                st.write(f"**🆔 ID Extrato:** {inconsistencia['id_extrato']}")
+                                st.write(f"**📅 Data:** {inconsistencia['data']}")
+                                st.write(f"**💰 Valor:** R$ {inconsistencia['valor']:.2f}")
+                                st.write(f"**🔄 Status no Extrato:** novo (deveria ser 'registrado')")
+                                st.write(f"**💳 Pagamentos Encontrados:** {', '.join(inconsistencia['pagamentos_encontrados'])}")
+                        
+                        # Botão para corrigir automaticamente
+                        st.markdown("---")
+                        if st.button("🔧 CORRIGIR AUTOMATICAMENTE", type="primary"):
+                            with st.spinner("Aplicando correções..."):
+                                resultado_correcao = verificar_e_corrigir_extrato_duplicado()
+                                
+                                if resultado_correcao.get("success"):
+                                    corrigidos = resultado_correcao.get("corrigidos", 0)
+                                    if corrigidos > 0:
+                                        st.success(f"✅ {corrigidos} registros corrigidos com sucesso!")
+                                        
+                                        # Mostrar detalhes das correções
+                                        detalhes = resultado_correcao.get("detalhes", [])
+                                        if detalhes:
+                                            st.subheader("✅ Correções Aplicadas")
+                                            for correcao in detalhes:
+                                                st.write(f"• **{correcao['nome_remetente']}** - R$ {correcao['valor']:.2f}")
+                                                st.write(f"  📅 {correcao['data_pagamento']} | 🆔 Extrato: {correcao['id_extrato']} | 💳 Pagamento: {correcao['id_pagamento_encontrado']}")
+                                        
+                                        st.info("🔄 Execute a verificação novamente para confirmar que as inconsistências foram resolvidas.")
+                                    else:
+                                        st.warning("⚠️ Nenhuma correção foi aplicada.")
+                                else:
+                                    st.error(f"❌ Erro na correção: {resultado_correcao.get('error')}")
+                    
+                    else:
+                        st.success("✅ Nenhuma inconsistência encontrada! O banco de dados está consistente.")
+                        
+                        if relatorio["total_extrato"] > 0:
+                            st.info(f"📊 Todos os {relatorio['total_extrato']} registros do extrato estão com status correto.")
+                
+                else:
+                    st.error(f"❌ Erro na verificação: {resultado_consistencia.get('error')}")
+        
+        # Informações sobre a funcionalidade
+        if not st.session_state.get('executar_verificacao', False):
+            st.markdown("---")
+            st.subheader("ℹ️ Sobre a Verificação de Consistência")
+            
+            st.markdown("""
+            **🎯 O que esta ferramenta faz:**
+            
+            1. **Analisa** registros do extrato PIX com status 'novo'
+            2. **Verifica** se já existem pagamentos correspondentes na tabela de pagamentos
+            3. **Identifica** registros duplicados ou inconsistentes
+            4. **Corrige** automaticamente o status para 'registrado' quando apropriado
+            
+            **🔍 Critérios de Identificação:**
+            
+            - Mesmo **responsável**, **valor** e **data de pagamento**
+            - Pagamento com flag `origem_extrato = true`
+            - Referência ao ID do extrato original (`id_extrato_origem`)
+            
+            **⚠️ Quando usar:**
+            
+            - Após importar novos dados do extrato PIX
+            - Quando notar registros duplicados na interface
+            - Como manutenção periódica do banco de dados
+            - Antes de processar pagamentos em lote
+            """)
+            
+            # Botão de verificação rápida
+            if st.button("🚀 Verificação Rápida (Últimos 30 dias)", type="secondary"):
+                st.session_state.executar_verificacao = True
+                st.rerun()
+
+    # ==========================================================
+    # TAB 6: VINCULAR RESPONSÁVEIS
+    # ==========================================================
+    with tab6:
+        st.header("🔗 Vincular Responsáveis Automaticamente")
+        st.markdown("Ferramenta para identificar e vincular responsáveis aos registros do extrato PIX automaticamente.")
+        
+        # Informações sobre a funcionalidade
+        st.markdown("---")
+        st.subheader("ℹ️ Como Funciona")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            **🎯 O que esta ferramenta faz:**
+            
+            1. **Identifica** registros do extrato PIX sem `id_responsavel`
+            2. **Compara** nome do remetente com nomes na tabela `responsaveis`
+            3. **Aplica** correspondência com similaridade **≥ 90%**
+            4. **Preenche** automaticamente `id_responsavel` no extrato
+            5. **Preenche** `id_aluno` se responsável tem apenas 1 aluno vinculado
+            """)
+        
+        with col2:
+            st.markdown("""
+            **🔍 Critérios de Correspondência:**
+            
+            - **Similaridade:** Mínimo 90% entre nomes
+            - **Algoritmo:** difflib.SequenceMatcher
+            - **Normalização:** Usa `nome_norm` se disponível, senão `nome`
+            - **Comparação:** Case insensitive, remove espaços extras
+            - **Responsáveis com 1 aluno:** `id_aluno` preenchido automaticamente
+            - **Responsáveis com >1 aluno:** `id_aluno` preenchido no registro do pagamento
+            """)
+        
+        # Botão principal
+        col1, col2, col3 = st.columns([2, 1, 2])
+        
+        with col2:
+            if st.button("🚀 EXECUTAR VINCULAÇÃO", type="primary", help="Analisa todos os registros sem responsável"):
+                st.session_state.executar_vinculacao = True
+        
+        # Executar vinculação se solicitado
+        if st.session_state.get('executar_vinculacao', False):
+            st.session_state.executar_vinculacao = False  # Reset flag
+            
+            with st.spinner("🔍 Analisando registros sem responsável..."):
+                resultado_responsaveis = atualizar_responsaveis_extrato_pix()
+                
+                if resultado_responsaveis.get("success"):
+                    atualizados = resultado_responsaveis.get("atualizados", 0)
+                    total_analisados = resultado_responsaveis.get("total_analisados", 0)
+                    usou_nome_norm = resultado_responsaveis.get("usou_nome_norm", False)
+                    
+                    # Informação sobre normalização
+                    if usou_nome_norm:
+                        st.success("🔍 **Usando campo 'nome_norm'** - Melhor precisão na correspondência!")
+                    else:
+                        st.warning("⚠️ **Campo 'nome_norm' não encontrado** - Usando campo 'nome' padrão")
+                    
+                    # Métricas principais
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("📊 Registros Analisados", total_analisados)
+                    
+                    with col2:
+                        st.metric("✅ Vinculações Realizadas", atualizados)
+                    
+                    with col3:
+                        if total_analisados > 0:
+                            taxa_sucesso = (atualizados / total_analisados) * 100
+                            st.metric("📈 Taxa de Sucesso", f"{taxa_sucesso:.1f}%")
+                        else:
+                            st.metric("📈 Taxa de Sucesso", "N/A")
+                    
+                    with col4:
+                        restantes = total_analisados - atualizados
+                        st.metric("⚠️ Restantes", restantes, delta="Pendentes" if restantes > 0 else "Completo")
+                    
+                    if atualizados > 0:
+                        st.success(f"✅ {atualizados} registros vinculados com sucesso!")
+                        
+                        # Detalhes das correspondências
+                        correspondencias = resultado_responsaveis.get("correspondencias", [])
+                        if correspondencias:
+                            st.subheader("📋 Correspondências Realizadas")
+                            
+                            # Criar DataFrame para melhor visualização
+                            df_correspondencias = []
+                            for i, correspondencia in enumerate(correspondencias, 1):
+                                # Criar indicador de nome normalizado
+                                nome_comparacao = correspondencia.get('nome_usado_comparacao', correspondencia['nome_responsavel'])
+                                nome_display = correspondencia['nome_responsavel']
+                                if correspondencia.get('usado_nome_norm'):
+                                    nome_display += f" (norm: {nome_comparacao})"
+                                
+                                df_correspondencias.append({
+                                    "#": i,
+                                    "Nome Remetente": correspondencia['nome_remetente'],
+                                    "Responsável Encontrado": nome_display,
+                                    "Similaridade": f"{correspondencia['similaridade']:.1f}%",
+                                    "Alunos Vinculados": correspondencia['alunos_vinculados'],
+                                    "ID Aluno Preenchido": "✅" if correspondencia['id_aluno_preenchido'] else "⚠️",
+                                    "Usado nome_norm": "✅" if correspondencia.get('usado_nome_norm') else "❌"
+                                })
+                            
+                            if df_correspondencias:
+                                st.dataframe(
+                                    df_correspondencias,
+                                    column_config={
+                                        "#": st.column_config.NumberColumn("Item", width="small"),
+                                        "Nome Remetente": st.column_config.TextColumn("Remetente PIX"),
+                                        "Responsável Encontrado": st.column_config.TextColumn("Responsável Cadastrado"),
+                                        "Similaridade": st.column_config.TextColumn("Similaridade", width="small"),
+                                        "Alunos Vinculados": st.column_config.NumberColumn("Alunos", width="small"),
+                                        "ID Aluno Preenchido": st.column_config.TextColumn("Aluno OK", width="small"),
+                                        "Usado nome_norm": st.column_config.TextColumn("Nome Norm", width="small")
+                                    },
+                                    use_container_width=True,
+                                    height=300
+                                )
+                                
+                                # Resumo por categoria
+                                st.subheader("📊 Resumo por Categoria")
+                                
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    # Contagem por número de alunos
+                                    alunos_1 = len([c for c in correspondencias if c['alunos_vinculados'] == 1])
+                                    alunos_mult = len([c for c in correspondencias if c['alunos_vinculados'] > 1])
+                                    
+                                    st.markdown("**👨‍🎓 Por Número de Alunos:**")
+                                    st.write(f"• **1 aluno vinculado:** {alunos_1} responsáveis (ID aluno preenchido)")
+                                    st.write(f"• **Múltiplos alunos:** {alunos_mult} responsáveis (ID aluno pendente)")
+                                
+                                with col2:
+                                    # Contagem por faixa de similaridade
+                                    alta_similaridade = len([c for c in correspondencias if c['similaridade'] >= 95])
+                                    media_similaridade = len([c for c in correspondencias if 90 <= c['similaridade'] < 95])
+                                    
+                                    st.markdown("**🎯 Por Similaridade:**")
+                                    st.write(f"• **≥ 95%:** {alta_similaridade} correspondências (alta confiança)")
+                                    st.write(f"• **90-94%:** {media_similaridade} correspondências (média confiança)")
+                        
+                        # Recarregar dados após atualização
+                        st.info("🔄 Recarregando dados do extrato...")
+                        carregar_dados_extrato()
+                        st.rerun()
+                        
+                    else:
+                        st.info("ℹ️ Nenhuma correspondência válida encontrada (similaridade ≥ 90%)")
+                        
+                        # Mostrar análise detalhada
+                        debug_info = resultado_responsaveis.get("debug_info", [])
+                        if debug_info:
+                            with st.expander("📋 Ver Análise Detalhada"):
+                                for debug_line in debug_info:
+                                    st.text(debug_line)
+                
+                else:
+                    st.error(f"❌ Erro ao executar vinculação: {resultado_responsaveis.get('error')}")
+                    
+                    # Mostrar informações de debug em caso de erro
+                    debug_info = resultado_responsaveis.get("debug_info", [])
+                    if debug_info:
+                        with st.expander("🔍 Ver Detalhes do Erro"):
+                            for debug_line in debug_info:
+                                st.text(debug_line)
+        
+        # Informações adicionais sobre o processo
+        if not st.session_state.get('executar_vinculacao', False):
+            st.markdown("---")
+            st.subheader("💡 Dicas de Uso")
+            
+            st.markdown("""
+            **📝 Antes de Executar:**
+            
+            - Certifique-se de que os responsáveis estão cadastrados na tabela `responsaveis`
+            - Verifique se os nomes estão preenchidos corretamente
+            - Execute após importar novos dados do extrato PIX
+            
+            **⚠️ Importante:**
+            
+            - Responsáveis com **1 aluno:** O campo `id_aluno` será preenchido automaticamente
+            - Responsáveis com **múltiplos alunos:** O `id_aluno` será preenchido durante o registro do pagamento
+            - A ferramenta usa **similaridade ≥ 90%** para evitar correspondências incorretas
+            - Registros já com `id_responsavel` preenchido são ignorados
+            
+            **🔄 Após a Execução:**
+            
+            - Verifique os resultados na aba "✅ Pagamentos COM Responsável"
+            - Registros com correspondências aparecerão como "com responsável"
+            - Para múltiplos alunos, selecione o aluno específico durante o registro do pagamento
+            """)
+            
+            # Botão de execução rápida
+            if st.button("🚀 Executar Agora", type="secondary"):
+                st.session_state.executar_vinculacao = True
+                st.rerun()
+
 
 def processar_acoes_com_responsavel():
     """Processa ações selecionadas para registros com responsável com debugging completo"""
@@ -1721,178 +2392,8 @@ def processar_acoes_com_responsavel():
     carregar_dados_extrato()
     st.rerun()
 
-    # ==========================================================
-    # TAB 5: CONSISTÊNCIA
-    # ==========================================================
-    with tab5:
-        st.header("🔍 Verificação de Consistência")
-        st.markdown("Ferramentas para verificar e corrigir inconsistências entre extrato PIX e pagamentos registrados.")
-        
-        # Controles de período
-        col1, col2, col3 = st.columns([2, 2, 1])
-        
-        with col1:
-            data_inicio_consist = st.date_input(
-                "📅 Data Início",
-                value=st.session_state.filtro_data_inicio,
-                key="consist_inicio"
-            )
-        
-        with col2:
-            data_fim_consist = st.date_input(
-                "📅 Data Fim", 
-                value=st.session_state.filtro_data_fim,
-                key="consist_fim"
-            )
-        
-        with col3:
-            st.write(" ")  # Espaço
-            if st.button("🔍 Executar Verificação", type="primary"):
-                st.session_state.executar_verificacao = True
-        
-        # Executar verificação se solicitado
-        if st.session_state.get('executar_verificacao', False):
-            st.session_state.executar_verificacao = False  # Reset flag
-            
-            with st.spinner("🔍 Analisando consistência..."):
-                # 1. Relatório de consistência
-                resultado_consistencia = verificar_consistencia_extrato_pagamentos(
-                    data_inicio_consist.strftime("%Y-%m-%d"),
-                    data_fim_consist.strftime("%Y-%m-%d")
-                )
-                
-                if resultado_consistencia.get("success"):
-                    relatorio = resultado_consistencia["relatorio"]
-                    
-                    # Métricas principais
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.metric("📊 Total Extrato", relatorio["total_extrato"])
-                    
-                    with col2:
-                        st.metric("💳 Pagamentos (Origem Extrato)", relatorio["total_pagamentos_origem_extrato"])
-                    
-                    with col3:
-                        inconsistencias = len(relatorio["inconsistencias"])
-                        st.metric("⚠️ Inconsistências", inconsistencias, delta="Problema" if inconsistencias > 0 else "OK")
-                    
-                    with col4:
-                        novos = relatorio["status_extrato"].get("novo", 0)
-                        st.metric("🆕 Status 'Novo'", novos)
-                    
-                    # Status breakdown
-                    st.subheader("📊 Distribuição por Status")
-                    
-                    if relatorio["status_extrato"]:
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            for status, count in relatorio["status_extrato"].items():
-                                emoji = "🆕" if status == "novo" else "✅" if status == "registrado" else "🚫" if status == "ignorado" else "❓"
-                                st.write(f"{emoji} **{status.title()}:** {count} registros")
-                        
-                        with col2:
-                            # Gráfico de pizza para status
-                            if len(relatorio["status_extrato"]) > 1:
-                                df_status = pd.DataFrame(
-                                    list(relatorio["status_extrato"].items()),
-                                    columns=["Status", "Quantidade"]
-                                )
-                                
-                                fig = px.pie(
-                                    df_status, 
-                                    values="Quantidade", 
-                                    names="Status",
-                                    title="Distribuição de Status",
-                                    color_discrete_map={
-                                        "novo": "#ff7f0e",
-                                        "registrado": "#2ca02c", 
-                                        "ignorado": "#d62728"
-                                    }
-                                )
-                                fig.update_layout(height=300)
-                                st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Inconsistências encontradas
-                    if relatorio["inconsistencias"]:
-                        st.subheader("⚠️ Inconsistências Encontradas")
-                        st.error(f"Foram encontradas {len(relatorio['inconsistencias'])} inconsistências que precisam ser corrigidas.")
-                        
-                        # Mostrar detalhes das inconsistências
-                        for i, inconsistencia in enumerate(relatorio["inconsistencias"]):
-                            with st.expander(f"❌ Inconsistência {i+1}: {inconsistencia['nome_remetente']} - R$ {inconsistencia['valor']:.2f}"):
-                                st.write(f"**🆔 ID Extrato:** {inconsistencia['id_extrato']}")
-                                st.write(f"**📅 Data:** {inconsistencia['data']}")
-                                st.write(f"**💰 Valor:** R$ {inconsistencia['valor']:.2f}")
-                                st.write(f"**🔄 Status no Extrato:** novo (deveria ser 'registrado')")
-                                st.write(f"**💳 Pagamentos Encontrados:** {', '.join(inconsistencia['pagamentos_encontrados'])}")
-                        
-                        # Botão para corrigir automaticamente
-                        st.markdown("---")
-                        if st.button("🔧 CORRIGIR AUTOMATICAMENTE", type="primary"):
-                            with st.spinner("Aplicando correções..."):
-                                resultado_correcao = verificar_e_corrigir_extrato_duplicado()
-                                
-                                if resultado_correcao.get("success"):
-                                    corrigidos = resultado_correcao.get("corrigidos", 0)
-                                    if corrigidos > 0:
-                                        st.success(f"✅ {corrigidos} registros corrigidos com sucesso!")
-                                        
-                                        # Mostrar detalhes das correções
-                                        detalhes = resultado_correcao.get("detalhes", [])
-                                        if detalhes:
-                                            st.subheader("✅ Correções Aplicadas")
-                                            for correcao in detalhes:
-                                                st.write(f"• **{correcao['nome_remetente']}** - R$ {correcao['valor']:.2f}")
-                                                st.write(f"  📅 {correcao['data_pagamento']} | 🆔 Extrato: {correcao['id_extrato']} | 💳 Pagamento: {correcao['id_pagamento_encontrado']}")
-                                        
-                                        st.info("🔄 Execute a verificação novamente para confirmar que as inconsistências foram resolvidas.")
-                                    else:
-                                        st.warning("⚠️ Nenhuma correção foi aplicada.")
-                                else:
-                                    st.error(f"❌ Erro na correção: {resultado_correcao.get('error')}")
-                    
-                    else:
-                        st.success("✅ Nenhuma inconsistência encontrada! O banco de dados está consistente.")
-                        
-                        if relatorio["total_extrato"] > 0:
-                            st.info(f"📊 Todos os {relatorio['total_extrato']} registros do extrato estão com status correto.")
-                
-                else:
-                    st.error(f"❌ Erro na verificação: {resultado_consistencia.get('error')}")
-        
-        # Informações sobre a funcionalidade
-        if not st.session_state.get('executar_verificacao', False):
-            st.markdown("---")
-            st.subheader("ℹ️ Sobre a Verificação de Consistência")
-            
-            st.markdown("""
-            **🎯 O que esta ferramenta faz:**
-            
-            1. **Analisa** registros do extrato PIX com status 'novo'
-            2. **Verifica** se já existem pagamentos correspondentes na tabela de pagamentos
-            3. **Identifica** registros duplicados ou inconsistentes
-            4. **Corrige** automaticamente o status para 'registrado' quando apropriado
-            
-            **🔍 Critérios de Identificação:**
-            
-            - Mesmo **responsável**, **valor** e **data de pagamento**
-            - Pagamento com flag `origem_extrato = true`
-            - Referência ao ID do extrato original (`id_extrato_origem`)
-            
-            **⚠️ Quando usar:**
-            
-            - Após importar novos dados do extrato PIX
-            - Quando notar registros duplicados na interface
-            - Como manutenção periódica do banco de dados
-            - Antes de processar pagamentos em lote
-            """)
-            
-            # Botão de verificação rápida
-            if st.button("🚀 Verificação Rápida (Últimos 30 dias)", type="secondary"):
-                st.session_state.executar_verificacao = True
-                st.rerun()
+
+
 
 # ==========================================================
 # 🚀 EXECUTAR APLICAÇÃO
