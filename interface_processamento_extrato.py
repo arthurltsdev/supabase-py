@@ -40,6 +40,8 @@ from funcoes_extrato_otimizadas import (
     verificar_consistencia_extrato_pagamentos,
     atualizar_responsaveis_extrato_pix,
     corrigir_status_extrato_com_pagamentos,
+    buscar_alunos_por_turmas,
+    buscar_informacoes_completas_aluno,
     supabase
 )
 
@@ -521,11 +523,16 @@ def mostrar_informacoes_editaveis_aluno(aluno_data: Dict):
     st.subheader(f"📚 Informações de {aluno_data['nome']}")
     
     # Buscar dados completos do aluno
-    aluno_response = supabase.table("alunos").select("""
-        id, nome, turno, data_nascimento, dia_vencimento, 
-        data_matricula, valor_mensalidade, mensalidades_geradas,
-        turmas!inner(nome_turma)
-    """).eq("id", aluno_data['id']).execute()
+    try:
+        from funcoes_extrato_otimizadas import supabase as supabase_instance
+        aluno_response = supabase_instance.table("alunos").select("""
+            id, nome, turno, data_nascimento, dia_vencimento, 
+            data_matricula, valor_mensalidade, mensalidades_geradas,
+            turmas!inner(nome_turma)
+        """).eq("id", aluno_data['id']).execute()
+    except Exception as e:
+        st.error(f"❌ Erro ao buscar dados do aluno: {str(e)}")
+        return
     
     if not aluno_response.data:
         st.error("❌ Dados do aluno não encontrados")
@@ -575,8 +582,8 @@ def mostrar_informacoes_editaveis_aluno(aluno_data: Dict):
         with col2:
             novo_turno = st.selectbox(
                 "🕐 Turno",
-                options=["Matutino", "Vespertino", "Integral"],
-                index=["Matutino", "Vespertino", "Integral"].index(aluno_completo.get('turno', 'Matutino')) if aluno_completo.get('turno') in ["Matutino", "Vespertino", "Integral"] else 0,
+                options=["Manhã", "Tarde", "Integral", "Horário Extendido"],
+                index=["Manhã", "Tarde", "Integral", "Horário Extendido"].index(aluno_completo.get('turno', 'Manhã')) if aluno_completo.get('turno') in ["Manhã", "Tarde", "Integral", "Horário Extendido"] else 0,
                 key=f"turno_{aluno_data['id']}"
             )
             
@@ -663,6 +670,246 @@ def mostrar_gestao_responsaveis_aluno(id_aluno: str, nome_aluno: str):
             st.session_state[f"show_add_resp_{id_aluno}"] = False
             st.rerun()
 
+def mostrar_informacoes_completas_aluno_modal(id_aluno: str, nome_aluno: str):
+    """
+    Mostra janela modal com TODAS as informações do aluno, responsáveis e pagamentos
+    """
+    # Buscar informações completas
+    with st.spinner(f"Carregando informações completas de {nome_aluno}..."):
+        resultado = buscar_informacoes_completas_aluno(id_aluno)
+    
+    if not resultado.get("success"):
+        st.error(f"❌ Erro ao buscar informações: {resultado.get('error')}")
+        return
+    
+    aluno = resultado["aluno"]
+    responsaveis = resultado["responsaveis"]
+    pagamentos = resultado["pagamentos"]
+    mensalidades = resultado["mensalidades"]
+    estatisticas = resultado["estatisticas"]
+    
+    # Container principal
+    st.markdown(f"## 👨‍🎓 Informações Completas: {aluno['nome']}")
+    
+    # Métricas principais
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("👥 Responsáveis", estatisticas["total_responsaveis"])
+    
+    with col2:
+        st.metric("💳 Pagamentos", estatisticas["total_pagamentos"], 
+                 delta=f"R$ {estatisticas['total_pago']:,.2f}")
+    
+    with col3:
+        st.metric("📅 Mensalidades", estatisticas["total_mensalidades"],
+                 delta=f"{estatisticas['mensalidades_pagas']} pagas")
+    
+    with col4:
+        if estatisticas["mensalidades_vencidas"] > 0:
+            st.metric("⚠️ Vencidas", estatisticas["mensalidades_vencidas"], 
+                     delta="Atenção", delta_color="inverse")
+        else:
+            st.metric("✅ Situação", "Em dia", delta="OK")
+    
+    # Tabs para organizar informações
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Dados Pessoais", "👥 Responsáveis", "💰 Pagamentos", "📅 Mensalidades"])
+    
+    # TAB 1: Dados Pessoais
+    with tab1:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 📚 Informações Acadêmicas")
+            st.write(f"**🆔 ID do Aluno:** {aluno['id']}")
+            st.write(f"**📖 Nome:** {aluno['nome']}")
+            st.write(f"**🎓 Turma:** {aluno['turma_nome']}")
+            st.write(f"**🕐 Turno:** {aluno['turno']}")
+            st.write(f"**📅 Data Nascimento:** {aluno.get('data_nascimento', 'Não informado')}")
+            st.write(f"**🎯 Data Matrícula:** {aluno.get('data_matricula', 'Não informado')}")
+        
+        with col2:
+            st.markdown("### 💰 Informações Financeiras")
+            st.write(f"**💵 Valor Mensalidade:** R$ {aluno['valor_mensalidade']:.2f}")
+            st.write(f"**📆 Dia Vencimento:** {aluno.get('dia_vencimento', 'Não definido')}")
+            st.write(f"**📊 Mensalidades Geradas:** {'Sim' if aluno.get('mensalidades_geradas') else 'Não'}")
+            st.write(f"**💳 Total Pago:** R$ {estatisticas['total_pago']:,.2f}")
+            
+            # Indicador de situação financeira
+            if estatisticas["mensalidades_vencidas"] > 0:
+                st.error(f"⚠️ {estatisticas['mensalidades_vencidas']} mensalidades vencidas")
+            elif estatisticas["mensalidades_pendentes"] > 0:
+                st.warning(f"📅 {estatisticas['mensalidades_pendentes']} mensalidades pendentes")
+            else:
+                st.success("✅ Situação financeira em dia")
+    
+    # TAB 2: Responsáveis
+    with tab2:
+        if responsaveis:
+            st.markdown(f"### 👥 {len(responsaveis)} Responsáveis Vinculados")
+            
+            for i, resp in enumerate(responsaveis, 1):
+                with st.expander(f"👤 {i}. {resp['nome']} ({resp['tipo_relacao']})", expanded=True):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write(f"**🆔 ID:** {resp['id']}")
+                        st.write(f"**📱 Telefone:** {resp.get('telefone', 'Não informado')}")
+                        st.write(f"**📧 Email:** {resp.get('email', 'Não informado')}")
+                        st.write(f"**📍 Endereço:** {resp.get('endereco', 'Não informado')}")
+                    
+                    with col2:
+                        st.write(f"**👨‍👩‍👧‍👦 Tipo Relação:** {resp['tipo_relacao']}")
+                        st.write(f"**💰 Resp. Financeiro:** {'Sim' if resp['responsavel_financeiro'] else 'Não'}")
+                        st.write(f"**📄 CPF:** {resp.get('cpf', 'Não informado')}")
+                        
+                        # Indicador visual
+                        if resp['responsavel_financeiro']:
+                            st.success("💰 Responsável Financeiro")
+                        else:
+                            st.info("👥 Responsável Geral")
+        else:
+            st.warning("⚠️ Nenhum responsável vinculado a este aluno")
+            st.info("💡 Use a aba 'Gestão de Alunos/Responsáveis' para adicionar responsáveis")
+    
+    # TAB 3: Pagamentos
+    with tab3:
+        if pagamentos:
+            st.markdown(f"### 💳 {len(pagamentos)} Pagamentos Registrados")
+            
+            # Resumo por tipo
+            tipos_pagamento = {}
+            for pag in pagamentos:
+                tipo = pag["tipo_pagamento"]
+                if tipo not in tipos_pagamento:
+                    tipos_pagamento[tipo] = {"count": 0, "valor": 0}
+                tipos_pagamento[tipo]["count"] += 1
+                tipos_pagamento[tipo]["valor"] += pag["valor"]
+            
+            # Mostrar resumo
+            st.markdown("#### 📊 Resumo por Tipo de Pagamento")
+            cols = st.columns(len(tipos_pagamento))
+            
+            for i, (tipo, info) in enumerate(tipos_pagamento.items()):
+                with cols[i]:
+                    st.metric(
+                        f"💳 {tipo.title()}", 
+                        f"{info['count']} pag.", 
+                        delta=f"R$ {info['valor']:,.2f}"
+                    )
+            
+            # Lista detalhada
+            st.markdown("#### 📋 Lista Detalhada")
+            df_pagamentos = pd.DataFrame(pagamentos)
+            
+            # Configurar colunas
+            df_display = df_pagamentos[['data_pagamento', 'tipo_pagamento', 'valor', 'forma_pagamento', 'nome_responsavel', 'origem_extrato']].copy()
+            df_display.columns = ['Data', 'Tipo', 'Valor', 'Forma', 'Responsável', 'Origem Extrato']
+            
+            st.dataframe(
+                df_display,
+                column_config={
+                    "Data": st.column_config.DateColumn("Data"),
+                    "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                    "Origem Extrato": st.column_config.CheckboxColumn("Do Extrato PIX")
+                },
+                use_container_width=True,
+                height=300
+            )
+            
+        else:
+            st.info("ℹ️ Nenhum pagamento registrado para este aluno")
+            st.info("💡 Pagamentos aparecerão aqui após serem processados no extrato PIX")
+    
+    # TAB 4: Mensalidades
+    with tab4:
+        if mensalidades:
+            st.markdown(f"### 📅 {len(mensalidades)} Mensalidades")
+            
+            # Resumo por status
+            status_counts = {}
+            for mens in mensalidades:
+                status = mens["status_real"]
+                if status not in status_counts:
+                    status_counts[status] = 0
+                status_counts[status] += 1
+            
+            # Mostrar métricas de status
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                pagas = status_counts.get("Pago", 0) + status_counts.get("Pago parcial", 0)
+                st.metric("✅ Pagas", pagas)
+            
+            with col2:
+                a_vencer = status_counts.get("A vencer", 0)
+                st.metric("📅 A Vencer", a_vencer)
+            
+            with col3:
+                vencidas = status_counts.get("Vencida", 0)
+                if vencidas > 0:
+                    st.metric("⚠️ Vencidas", vencidas, delta="Atenção", delta_color="inverse")
+                else:
+                    st.metric("⚠️ Vencidas", 0)
+            
+            with col4:
+                valor_total_mensalidades = sum(m["valor"] for m in mensalidades)
+                st.metric("💰 Valor Total", f"R$ {valor_total_mensalidades:,.2f}")
+            
+            # Lista detalhada de mensalidades
+            st.markdown("#### 📋 Lista de Mensalidades")
+            
+            # Criar DataFrame
+            df_mensalidades = []
+            for mens in mensalidades:
+                status_emoji = {
+                    "Pago": "✅",
+                    "Pago parcial": "🔶", 
+                    "A vencer": "📅",
+                    "Vencida": "⚠️"
+                }.get(mens["status_real"], "❓")
+                
+                df_mensalidades.append({
+                    "Status": f"{status_emoji} {mens['status_real']}",
+                    "Mês": mens["mes_referencia"],
+                    "Valor": mens["valor"],
+                    "Vencimento": mens["data_vencimento"],
+                    "Data Pagamento": mens.get("data_pagamento", "—"),
+                    "Observações": mens.get("observacoes", "")
+                })
+            
+            df_display = pd.DataFrame(df_mensalidades)
+            
+            st.dataframe(
+                df_display,
+                column_config={
+                    "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                    "Vencimento": st.column_config.DateColumn("Vencimento"),
+                    "Data Pagamento": st.column_config.TextColumn("Pago em")
+                },
+                use_container_width=True,
+                height=400
+            )
+            
+        else:
+            st.info("ℹ️ Nenhuma mensalidade gerada para este aluno")
+            st.info("💡 Mensalidades devem ser geradas primeiro no sistema de gestão")
+    
+    # Botões de ação
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 1, 2])
+    
+    with col1:
+        if st.button("🔄 Atualizar Dados", use_container_width=True):
+            st.rerun()
+    
+    with col2:
+        if st.button("❌ Fechar", use_container_width=True):
+            # Limpar o estado de visualização
+            if f'mostrar_detalhes_{id_aluno}' in st.session_state:
+                del st.session_state[f'mostrar_detalhes_{id_aluno}']
+            st.rerun()
+
 def mostrar_formulario_cadastro_aluno():
     """Formulário para cadastrar novo aluno com possibilidade de vincular responsável"""
     with st.form("form_novo_aluno", clear_on_submit=True):
@@ -683,14 +930,19 @@ def mostrar_formulario_cadastro_aluno():
                 id_turma_selecionada = None
                 if turma_selecionada != "Selecionar turma...":
                     # Buscar ID da turma pelo nome
-                    turma_response = supabase.table("turmas").select("id").eq("nome_turma", turma_selecionada).execute()
-                    if turma_response.data:
-                        id_turma_selecionada = turma_response.data[0]["id"]
+                    try:
+                        from funcoes_extrato_otimizadas import supabase as supabase_instance
+                        turma_response = supabase_instance.table("turmas").select("id").eq("nome_turma", turma_selecionada).execute()
+                        if turma_response.data:
+                            id_turma_selecionada = turma_response.data[0]["id"]
+                    except Exception as e:
+                        st.error(f"❌ Erro ao buscar ID da turma: {str(e)}")
+                        return None
             else:
                 st.error("❌ Erro ao carregar turmas")
                 return None
             
-            turno = st.selectbox("Turno*", ["Matutino", "Vespertino", "Integral"], key="aluno_turno")
+            turno = st.selectbox("Turno*", ["Manhã", "Tarde", "Integral", "Horário Extendido"], key="aluno_turno")
             data_nascimento = st.date_input("Data de Nascimento", key="aluno_data_nasc")
         
         with col2:
@@ -1495,11 +1747,15 @@ def main():
                             
                             if resultado and resultado.get("success"):
                                 # Atualizar o registro do extrato com o novo responsável
-                                from funcoes_extrato_otimizadas import supabase
-                                supabase.table("extrato_pix").update({
-                                    "id_responsavel": resultado["id_responsavel"],
-                                    "atualizado_em": datetime.now().isoformat()
-                                }).eq("id", registro["id"]).execute()
+                                try:
+                                    from funcoes_extrato_otimizadas import supabase as supabase_instance
+                                    supabase_instance.table("extrato_pix").update({
+                                        "id_responsavel": resultado["id_responsavel"],
+                                        "atualizado_em": datetime.now().isoformat()
+                                    }).eq("id", registro["id"]).execute()
+                                except Exception as e:
+                                    st.error(f"❌ Erro ao atualizar extrato: {str(e)}")
+                                    return
                                 
                                 st.success("✅ Responsável cadastrado e extrato atualizado!")
                                 st.session_state[f"show_form_{registro['id']}"] = False
@@ -1517,93 +1773,291 @@ def main():
     with tab3:
         st.header("👥 Gestão de Alunos e Responsáveis")
         
-        # Botões principais
-        col1, col2 = st.columns([3, 1])
+        # Verificar se algum aluno está sendo visualizado em detalhes
+        aluno_detalhes_ativo = None
+        for key in st.session_state.keys():
+            if key.startswith('mostrar_detalhes_') and st.session_state[key]:
+                aluno_detalhes_ativo = key.replace('mostrar_detalhes_', '')
+                break
         
-        with col1:
-            # Busca de aluno melhorada
-            busca_aluno = st.text_input("🔍 Buscar aluno por nome", key="busca_gestao_aluno", placeholder="Digite pelo menos 2 caracteres...")
+        # Se há detalhes sendo mostrados, mostrar apenas isso
+        if aluno_detalhes_ativo:
+            # Buscar nome do aluno
+            try:
+                from funcoes_extrato_otimizadas import supabase as supabase_instance
+                aluno_response = supabase_instance.table("alunos").select("nome").eq("id", aluno_detalhes_ativo).execute()
+                nome_aluno = aluno_response.data[0]["nome"] if aluno_response.data else "Aluno"
+            except:
+                nome_aluno = "Aluno"
+            
+            mostrar_informacoes_completas_aluno_modal(aluno_detalhes_ativo, nome_aluno)
+            return
         
-        with col2:
-            st.write("")  # Espaço para alinhar
+        # Interface principal: duas seções lado a lado
+        col_busca, col_turmas = st.columns([1, 1])
+        
+        # Inicializar variável de busca
+        busca_aluno = ""
+        
+        # ==========================================================
+        # SEÇÃO 1: BUSCA POR NOME (mantida do código original)
+        # ==========================================================
+        with col_busca:
+            st.markdown("### 🔍 Busca por Nome")
+            
+            # Botão cadastrar novo aluno
             if st.button("🎓 Cadastrar Novo Aluno", type="primary", key="btn_cadastrar_aluno"):
                 st.session_state.show_cadastro_aluno = True
+            
+            # Busca de aluno por nome
+            busca_aluno = st.text_input("Digite o nome do aluno", key="busca_gestao_aluno", placeholder="Digite pelo menos 2 caracteres...")
+            
+            # Inicializar lista de alunos
+            if 'lista_alunos_gestao' not in st.session_state:
+                st.session_state.lista_alunos_gestao = []
+            
+            # Buscar alunos automaticamente conforme digita
+            if len(busca_aluno) >= 2:
+                resultado_busca = buscar_alunos_para_dropdown(busca_aluno)
+                if resultado_busca.get("success"):
+                    st.session_state.lista_alunos_gestao = resultado_busca.get("opcoes", [])
+            elif len(busca_aluno) == 0:
+                st.session_state.lista_alunos_gestao = []
+            
+            # Exibir lista de alunos encontrados
+            if st.session_state.lista_alunos_gestao:
+                st.markdown(f"**📋 {len(st.session_state.lista_alunos_gestao)} alunos encontrados:**")
+                
+                for aluno in st.session_state.lista_alunos_gestao[:10]:  # Limitar a 10 para performance
+                    col_nome, col_btn = st.columns([3, 1])
+                    
+                    with col_nome:
+                        st.write(f"👨‍🎓 {aluno['label']}")
+                    
+                    with col_btn:
+                        if st.button("👁️ Ver Detalhes", key=f"detalhes_busca_{aluno['id']}", use_container_width=True):
+                            st.session_state[f'mostrar_detalhes_{aluno["id"]}'] = True
+                            st.rerun()
+                
+                if len(st.session_state.lista_alunos_gestao) > 10:
+                    st.info(f"Mostrando 10 de {len(st.session_state.lista_alunos_gestao)} resultados. Seja mais específico na busca.")
+                    
+            elif len(busca_aluno) >= 2:
+                st.info("Nenhum aluno encontrado com esse nome")
+            else:
+                st.info("Digite pelo menos 2 caracteres para buscar")
         
-        # Formulário de cadastro de aluno
+        # ==========================================================
+        # SEÇÃO 2: FILTRO POR TURMAS (nova funcionalidade)
+        # ==========================================================
+        with col_turmas:
+            st.markdown("### 🎓 Filtro por Turmas")
+            
+            # Buscar todas as turmas disponíveis
+            turmas_resultado = listar_turmas_disponiveis()
+            
+            if turmas_resultado.get("success") and turmas_resultado.get("turmas"):
+                turmas_disponiveis = turmas_resultado["turmas"]
+                
+                # Buscar turmas com seus IDs usando a função auxiliar
+                try:
+                    from funcoes_extrato_otimizadas import supabase as supabase_instance
+                    turmas_response = supabase_instance.table("turmas").select("id, nome_turma").order("nome_turma").execute()
+                    turmas_com_id = {turma["nome_turma"]: turma["id"] for turma in turmas_response.data}
+                except Exception as e:
+                    st.error(f"❌ Erro ao carregar IDs das turmas: {str(e)}")
+                    turmas_com_id = {}
+                
+                # Multiselect para turmas
+                turmas_selecionadas = st.multiselect(
+                    "Selecione as turmas:",
+                    options=turmas_disponiveis,
+                    key="turmas_selecionadas_gestao",
+                    help="Você pode selecionar múltiplas turmas"
+                )
+                
+                if turmas_selecionadas:
+                    # Converter nomes para IDs
+                    ids_turmas_selecionadas = [turmas_com_id[nome] for nome in turmas_selecionadas if nome in turmas_com_id]
+                    
+                    if st.button("🔍 Buscar Alunos das Turmas", type="secondary", use_container_width=True):
+                        st.session_state.executar_busca_turmas = True
+                        st.session_state.ids_turmas_para_busca = ids_turmas_selecionadas
+                    
+                    # Executar busca se solicitado
+                    if st.session_state.get('executar_busca_turmas', False) and st.session_state.get('ids_turmas_para_busca'):
+                        st.session_state.executar_busca_turmas = False  # Reset flag
+                        
+                        with st.spinner("Buscando alunos das turmas selecionadas..."):
+                            resultado_turmas = buscar_alunos_por_turmas(st.session_state.ids_turmas_para_busca)
+                        
+                        if resultado_turmas.get("success"):
+                            if resultado_turmas.get("count", 0) > 0:
+                                alunos_por_turma = resultado_turmas["alunos_por_turma"]
+                                total_alunos = resultado_turmas["total_alunos"]
+                                
+                                st.success(f"✅ {total_alunos} alunos encontrados em {len(alunos_por_turma)} turmas")
+                                
+                                # Salvar resultado no session state para exibição
+                                st.session_state.resultado_busca_turmas = resultado_turmas
+                            else:
+                                st.warning("⚠️ Nenhum aluno encontrado nas turmas selecionadas")
+                                st.session_state.resultado_busca_turmas = None
+                        else:
+                            st.error(f"❌ Erro na busca: {resultado_turmas.get('error')}")
+                            st.session_state.resultado_busca_turmas = None
+                
+                else:
+                    st.info("Selecione pelo menos uma turma para buscar alunos")
+                    st.session_state.resultado_busca_turmas = None
+            else:
+                st.error("❌ Erro ao carregar turmas disponíveis")
+        
+        # ==========================================================
+        # FORMULÁRIO DE CADASTRO (se ativo)
+        # ==========================================================
         if st.session_state.get('show_cadastro_aluno', False):
             st.markdown("---")
-            resultado = mostrar_formulario_cadastro_aluno()
+            st.markdown("## 📝 Cadastro de Novo Aluno")
             
-            if resultado:
-                # Sucesso no cadastro - limpar flag e recarregar busca
-                st.session_state.show_cadastro_aluno = False
-                # Atualizar lista de alunos se estava buscando
-                if busca_aluno:
-                    resultado_busca = buscar_alunos_para_dropdown(busca_aluno)
-                    if resultado_busca.get("success"):
-                        st.session_state.lista_alunos_gestao = resultado_busca.get("opcoes", [])
-                st.rerun()
-        
-        # Botão para fechar formulário de cadastro
-        if st.session_state.get('show_cadastro_aluno', False):
+            # Botão para cancelar
             col1, col2 = st.columns([4, 1])
             with col2:
                 if st.button("❌ Cancelar Cadastro", type="secondary"):
                     st.session_state.show_cadastro_aluno = False
                     st.rerun()
+            
+            # Formulário
+            resultado = mostrar_formulario_cadastro_aluno()
+            
+            if resultado:
+                # Sucesso no cadastro - limpar flag
+                st.session_state.show_cadastro_aluno = False
+                st.rerun()
+        
+        # ==========================================================
+        # RESULTADOS DA BUSCA POR TURMAS
+        # ==========================================================
+        if st.session_state.get('resultado_busca_turmas') and not st.session_state.get('show_cadastro_aluno', False):
             st.markdown("---")
-        
-        # Inicializar lista de alunos
-        if 'lista_alunos_gestao' not in st.session_state:
-            st.session_state.lista_alunos_gestao = []
-        
-        # Buscar alunos automaticamente conforme digita
-        if len(busca_aluno) >= 2:
-            resultado_busca = buscar_alunos_para_dropdown(busca_aluno)
-            if resultado_busca.get("success"):
-                st.session_state.lista_alunos_gestao = resultado_busca.get("opcoes", [])
-        elif len(busca_aluno) == 0:
-            # Se campo vazio, buscar todos os alunos (limitado)
-            resultado_busca = buscar_alunos_para_dropdown("")
-            if resultado_busca.get("success"):
-                st.session_state.lista_alunos_gestao = resultado_busca.get("opcoes", [])
-        
-        # Exibir lista de alunos encontrados (apenas se não estiver mostrando cadastro)
-        if not st.session_state.get('show_cadastro_aluno', False):
-            if st.session_state.lista_alunos_gestao:
-                # Selectbox com os alunos encontrados
-                opcoes_formatadas = ["Selecione um aluno..."] + [aluno["label"] for aluno in st.session_state.lista_alunos_gestao]
+            st.markdown("## 📋 Resultados da Busca por Turmas")
+            
+            resultado = st.session_state.resultado_busca_turmas
+            alunos_por_turma = resultado["alunos_por_turma"]
+            total_alunos = resultado["total_alunos"]
+            
+            # Métricas
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("🎓 Turmas", len(alunos_por_turma))
+            with col2:
+                st.metric("👨‍🎓 Total de Alunos", total_alunos)
+            with col3:
+                if st.button("🔄 Limpar Resultados", type="secondary"):
+                    st.session_state.resultado_busca_turmas = None
+                    st.rerun()
+            
+            # Exibir alunos agrupados por turma
+            for turma_nome, dados_turma in alunos_por_turma.items():
+                alunos_turma = dados_turma["alunos"]
                 
-                aluno_escolhido = st.selectbox(
-                    f"🎓 Alunos encontrados ({len(st.session_state.lista_alunos_gestao)}):",
-                    options=opcoes_formatadas,
-                    key="select_gestao_aluno"
-                )
-                
-                # Encontrar o aluno selecionado
-                aluno_selecionado = None
-                if aluno_escolhido != "Selecione um aluno...":
-                    for aluno in st.session_state.lista_alunos_gestao:
-                        if aluno["label"] == aluno_escolhido:
-                            aluno_selecionado = aluno
-                            break
-                
-                if aluno_selecionado:
-                    st.markdown("---")
-                    
-                    # Usar a nova função para mostrar informações editáveis
-                    mostrar_informacoes_editaveis_aluno(aluno_selecionado)
-                    
-                    # Gestão de responsáveis
-                    st.markdown("---")
-                    mostrar_gestao_responsaveis_aluno(
-                        aluno_selecionado["id"], 
-                        aluno_selecionado["nome"]
-                    )
-            elif len(busca_aluno) >= 2:
-                st.info("Nenhum aluno encontrado com esse nome")
-            elif len(busca_aluno) == 0:
-                st.info("🔍 Digite o nome de um aluno para buscar ou clique em 'Cadastrar Novo Aluno' para adicionar um novo aluno.")
+                with st.expander(f"🎓 {turma_nome} ({len(alunos_turma)} alunos)", expanded=True):
+                    # Exibir cada aluno com informações completas
+                    for aluno in alunos_turma:
+                        # Card expandido com todas as informações
+                        with st.container():
+                            # Tratamento de valores None para evitar erro de formatação
+                            nome = aluno.get('nome') or 'Nome não informado'
+                            turno = aluno.get('turno') or 'Não informado'
+                            valor_mensalidade = aluno.get('valor_mensalidade') or 0
+                            data_nascimento = aluno.get('data_nascimento') or 'Não informado'
+                            dia_vencimento = aluno.get('dia_vencimento') or 'Não definido'
+                            data_matricula = aluno.get('data_matricula') or 'Não informado'
+                            
+                            st.markdown(f"""
+                            <div style="
+                                border: 2px solid #e0e0e0; 
+                                border-radius: 10px; 
+                                padding: 15px; 
+                                margin: 10px 0;
+                                background-color: #f8f9fa;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                            ">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <h4 style="margin: 0; color: #2c3e50;">👨‍🎓 {nome}</h4>
+                                    <span style="background-color: #3498db; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">
+                                        {turma_nome}
+                                    </span>
+                                </div>
+                                
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                                    <div>
+                                        <strong>📋 Dados Básicos:</strong><br>
+                                        <small>🕐 <strong>Turno:</strong> {turno}</small><br>
+                                        <small>💰 <strong>Mensalidade:</strong> R$ {valor_mensalidade:.2f}</small><br>
+                                        <small>🎂 <strong>Nascimento:</strong> {data_nascimento}</small><br>
+                                        <small>📅 <strong>Vencimento:</strong> Dia {dia_vencimento}</small><br>
+                                        <small>🎓 <strong>Matrícula:</strong> {data_matricula}</small>
+                                    </div>
+                                    
+                                    <div>
+                                        <strong>👨‍👩‍👧‍👦 Responsáveis ({aluno.get('total_responsaveis', 0)}):</strong><br>
+                            """, unsafe_allow_html=True)
+                            
+                            # Mostrar responsáveis
+                            if aluno.get('responsaveis'):
+                                for resp in aluno['responsaveis']:
+                                    financeiro_badge = "💰" if resp.get('responsavel_financeiro') else "👤"
+                                    nome_resp = resp.get('nome', 'Nome não informado')
+                                    tipo_relacao = resp.get('tipo_relacao', 'responsável')
+                                    st.markdown(f"""
+                                    <small>{financeiro_badge} <strong>{nome_resp}</strong> - {tipo_relacao}</small><br>
+                                    """, unsafe_allow_html=True)
+                            else:
+                                st.markdown("<small>❌ Nenhum responsável cadastrado</small><br>", unsafe_allow_html=True)
+                            
+                            st.markdown("</div></div></div>", unsafe_allow_html=True)
+                            
+                            # Botão para ver detalhes completos
+                            col1, col2 = st.columns([3, 1])
+                            with col2:
+                                if st.button(
+                                    "👁️ Ver Detalhes Completos", 
+                                    key=f"detalhes_turma_{aluno['id']}", 
+                                    use_container_width=True,
+                                    help=f"Ver todas as informações de {nome}"
+                                ):
+                                    st.session_state[f'mostrar_detalhes_{aluno["id"]}'] = True
+                                    st.rerun()
+        
+        # ==========================================================
+        # INSTRUÇÕES (se não há busca ativa)
+        # ==========================================================
+        if (not st.session_state.get('show_cadastro_aluno', False) and 
+            not st.session_state.get('resultado_busca_turmas') and 
+            len(busca_aluno) < 2):
+            
+            st.markdown("---")
+            st.markdown("## 💡 Como Usar")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("""
+                **🔍 Busca por Nome:**
+                1. Digite o nome do aluno (mín. 2 caracteres)
+                2. Clique em "Ver Detalhes" para informações completas
+                3. Edite dados diretamente na interface
+                """)
+            
+            with col2:
+                st.markdown("""
+                **🎓 Filtro por Turmas:**
+                1. Selecione uma ou mais turmas
+                2. Clique em "Buscar Alunos das Turmas"
+                3. Navegue pelos resultados agrupados por turma
+                4. Clique em "Ver Detalhes Completos" para informações completas
+                """)
     
     # ==========================================================
     # TAB 4: HISTÓRICO

@@ -15,13 +15,18 @@ classifiers = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.9,<3.9.7 || >3.9.7,<4.0"
 postgrest = ">0.19,<1.1"
 realtime = ">=2.4.0 <2.5.0"
 gotrue = "^2.11.0"
 httpx = ">=0.26,<0.29"
 storage3 = ">=0.10,<0.12"
 supafunc = "^0.9"
+streamlit = "^1.37.0"
+pandas = "^2.0.0"
+plotly = "^5.17.0"
+openai = "^1.0.0"
+python-dotenv = "^1.1.0"
 
 [tool.poetry.dev-dependencies]
 pre-commit = "^4.1.0"
@@ -31,7 +36,6 @@ flake8 = "^7.2.0"
 isort = "^6.0.1"
 pytest-cov = "^6.1.1"
 commitizen = "^4.8.2"
-python-dotenv = "^1.1.0"
 
 [tool.poetry.scripts]
 tests = 'poetry_scripts:run_tests'

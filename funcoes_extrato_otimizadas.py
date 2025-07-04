@@ -1280,80 +1280,46 @@ def obter_estatisticas_extrato(data_inicio: Optional[str] = None,
 
 def listar_mensalidades_disponiveis_aluno(id_aluno: str) -> Dict:
     """
-    Lista mensalidades disponíveis para pagamento de um aluno específico
-    (status "A vencer" ou "Vencida")
+    Lista mensalidades disponíveis para pagamento de um aluno
     
     Args:
         id_aluno: ID do aluno
         
     Returns:
-        Dict com mensalidades disponíveis formatadas para seleção
+        Dict com mensalidades disponíveis
     """
     try:
-        # Buscar mensalidades pendentes (A vencer, Vencida)
+        # Buscar mensalidades pendentes (status diferente de "Pago" e "Cancelado")
         response = supabase.table("mensalidades").select("""
-            id_mensalidade, mes_referencia, valor, data_vencimento, status, observacoes
-        """).eq("id_aluno", id_aluno).in_("status", ["A vencer", "Vencida"]).order("data_vencimento").execute()
+            id_mensalidade, mes_referencia, valor, data_vencimento, status
+        """).eq("id_aluno", id_aluno).not_.in_("status", ["Pago", "Cancelado"]).execute()
         
         if not response.data:
-            return {
-                "success": True,
-                "mensalidades": [],
-                "count": 0,
-                "message": "Nenhuma mensalidade pendente encontrada para este aluno"
-            }
+            return {"success": True, "mensalidades": []}
         
-        # Formatear mensalidades para exibição
-        from datetime import datetime
-        data_hoje = datetime.now().date()
-        
-        mensalidades_formatadas = []
-        for mensalidade in response.data:
-            data_vencimento = datetime.strptime(mensalidade["data_vencimento"], "%Y-%m-%d").date()
+        mensalidades = []
+        for mens in response.data:
+            # Determinar status visual
+            from datetime import datetime, date
+            data_vencimento = datetime.strptime(mens['data_vencimento'], '%Y-%m-%d').date()
+            hoje = date.today()
             
-            # Calcular status real e dias de atraso/antecedência
-            if data_vencimento < data_hoje:
-                status_real = "Vencida"
-                dias_diferenca = (data_hoje - data_vencimento).days
-                status_texto = f"Vencida há {dias_diferenca} dias"
+            if data_vencimento < hoje:
+                status_texto = "⚠️ Vencida"
             else:
-                status_real = "A vencer"
-                dias_diferenca = (data_vencimento - data_hoje).days
-                if dias_diferenca == 0:
-                    status_texto = "Vence hoje"
-                else:
-                    status_texto = f"Vence em {dias_diferenca} dias"
+                status_texto = "📅 A vencer"
             
-            # Formatar para exibição
-            mes_ref = mensalidade["mes_referencia"]
-            valor = mensalidade["valor"]
-            data_venc_fmt = data_vencimento.strftime("%d/%m/%Y")
-            
-            # Label para dropdown/seleção
-            label = f"{mes_ref} - R$ {valor:.2f} - {data_venc_fmt} ({status_texto})"
-            
-            mensalidade_formatada = {
-                "id_mensalidade": mensalidade["id_mensalidade"],
-                "mes_referencia": mes_ref,
-                "valor": valor,
-                "data_vencimento": mensalidade["data_vencimento"],
-                "data_vencimento_fmt": data_venc_fmt,
-                "status": mensalidade["status"],
-                "status_real": status_real,
+            mensalidades.append({
+                "id_mensalidade": mens["id_mensalidade"],
+                "mes_referencia": mens["mes_referencia"],
+                "valor": mens["valor"],
+                "data_vencimento": mens["data_vencimento"],
+                "status": mens["status"],
                 "status_texto": status_texto,
-                "dias_diferenca": dias_diferenca,
-                "observacoes": mensalidade.get("observacoes"),
-                "label": label
-            }
-            
-            mensalidades_formatadas.append(mensalidade_formatada)
+                "label": f"{mens['mes_referencia']} - R$ {float(mens['valor']):,.2f} - {status_texto}"
+            })
         
-        return {
-            "success": True,
-            "mensalidades": mensalidades_formatadas,
-            "count": len(mensalidades_formatadas),
-            "message": f"Encontradas {len(mensalidades_formatadas)} mensalidades pendentes"
-        }
+        return {"success": True, "mensalidades": mensalidades}
         
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1873,6 +1839,576 @@ def atualizar_extrato_apos_pagamento(id_extrato: str, status: str = "registrado"
             "success": False,
             "error": f"Erro ao atualizar extrato após pagamento: {str(e)}"
         }
+
+def buscar_alunos_por_turmas(ids_turmas: List[str]) -> Dict:
+    """
+    Busca alunos por uma lista de IDs de turmas com informações completas dos responsáveis
+    
+    Args:
+        ids_turmas: Lista de IDs das turmas para filtrar
+        
+    Returns:
+        Dict com alunos encontrados agrupados por turma, incluindo dados dos responsáveis
+    """
+    try:
+        if not ids_turmas:
+            return {
+                "success": True,
+                "alunos": [],
+                "count": 0,
+                "message": "Nenhuma turma selecionada"
+            }
+        
+        # Buscar alunos das turmas selecionadas
+        response = supabase.table("alunos").select("""
+            id, nome, turno, data_nascimento, dia_vencimento, 
+            data_matricula, valor_mensalidade, id_turma,
+            turmas!inner(id, nome_turma)
+        """).in_("id_turma", ids_turmas).order("nome").execute()
+        
+        if not response.data:
+            return {
+                "success": True,
+                "alunos": [],
+                "count": 0,
+                "message": f"Nenhum aluno encontrado nas {len(ids_turmas)} turmas selecionadas"
+            }
+        
+        # Agrupar por turma e buscar responsáveis
+        alunos_por_turma = {}
+        total_alunos = 0
+        
+        for aluno in response.data:
+            turma_nome = aluno["turmas"]["nome_turma"]
+            turma_id = aluno["turmas"]["id"]
+            
+            if turma_nome not in alunos_por_turma:
+                alunos_por_turma[turma_nome] = {
+                    "id_turma": turma_id,
+                    "nome_turma": turma_nome,
+                    "alunos": []
+                }
+            
+            # Buscar responsáveis do aluno
+            responsaveis_response = supabase.table("alunos_responsaveis").select("""
+                tipo_relacao, responsavel_financeiro,
+                responsaveis!inner(nome)
+            """).eq("id_aluno", aluno["id"]).execute()
+            
+            # Organizar responsáveis
+            responsaveis_info = []
+            responsavel_financeiro_nome = "Não informado"
+            
+            for vinculo in responsaveis_response.data:
+                resp_info = {
+                    "nome": vinculo["responsaveis"]["nome"],
+                    "tipo_relacao": vinculo.get("tipo_relacao", "responsável"),
+                    "responsavel_financeiro": vinculo.get("responsavel_financeiro", False)
+                }
+                responsaveis_info.append(resp_info)
+                
+                # Identificar responsável financeiro
+                if vinculo.get("responsavel_financeiro", False):
+                    responsavel_financeiro_nome = vinculo["responsaveis"]["nome"]
+            
+            # Se não há responsável financeiro marcado, usar o primeiro
+            if responsavel_financeiro_nome == "Não informado" and responsaveis_info:
+                responsavel_financeiro_nome = responsaveis_info[0]["nome"]
+            
+            # Formatar dados do aluno com tratamento de valores None
+            aluno_formatado = {
+                "id": aluno["id"],
+                "nome": aluno["nome"] or "Nome não informado",
+                "turno": aluno.get("turno") or "Não informado",
+                "data_nascimento": aluno.get("data_nascimento") or "Não informado",
+                "dia_vencimento": aluno.get("dia_vencimento") or "Não definido",
+                "data_matricula": aluno.get("data_matricula") or "Não informado",
+                "valor_mensalidade": float(aluno.get("valor_mensalidade") or 0),
+                "label": f"{aluno['nome'] or 'Nome não informado'} - {turma_nome}",
+                "turma_nome": turma_nome,
+                "responsaveis": responsaveis_info,
+                "responsavel_financeiro_nome": responsavel_financeiro_nome,
+                "total_responsaveis": len(responsaveis_info)
+            }
+            
+            alunos_por_turma[turma_nome]["alunos"].append(aluno_formatado)
+            total_alunos += 1
+        
+        return {
+            "success": True,
+            "alunos_por_turma": alunos_por_turma,
+            "total_alunos": total_alunos,
+            "total_turmas": len(alunos_por_turma),
+            "count": total_alunos
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
+    """
+    Busca todas as informações de um aluno: dados pessoais, responsáveis e pagamentos
+    
+    Args:
+        id_aluno: ID do aluno
+        
+    Returns:
+        Dict com informações completas do aluno
+    """
+    try:
+        # 1. Buscar dados básicos do aluno
+        aluno_response = supabase.table("alunos").select("""
+            id, nome, turno, data_nascimento, dia_vencimento, 
+            data_matricula, valor_mensalidade, mensalidades_geradas,
+            turmas!inner(id, nome_turma)
+        """).eq("id", id_aluno).execute()
+        
+        if not aluno_response.data:
+            return {"success": False, "error": f"Aluno com ID {id_aluno} não encontrado"}
+        
+        aluno = aluno_response.data[0]
+        
+        # 2. Buscar responsáveis vinculados
+        responsaveis_response = supabase.table("alunos_responsaveis").select("""
+            id, tipo_relacao, responsavel_financeiro,
+            responsaveis!inner(
+                id, nome, cpf, telefone, email, endereco
+            )
+        """).eq("id_aluno", id_aluno).execute()
+        
+        responsaveis = []
+        for vinculo in responsaveis_response.data:
+            resp_data = vinculo["responsaveis"].copy()
+            resp_data["tipo_relacao"] = vinculo.get("tipo_relacao")
+            resp_data["responsavel_financeiro"] = vinculo.get("responsavel_financeiro", False)
+            resp_data["id_vinculo"] = vinculo.get("id")
+            responsaveis.append(resp_data)
+        
+        # 3. Buscar pagamentos do aluno
+        pagamentos_response = supabase.table("pagamentos").select("""
+            id_pagamento, data_pagamento, valor, tipo_pagamento, 
+            forma_pagamento, descricao, origem_extrato,
+            responsaveis!inner(nome)
+        """).eq("id_aluno", id_aluno).order("data_pagamento", desc=True).execute()
+        
+        pagamentos = []
+        total_pago = 0
+        for pagamento in pagamentos_response.data:
+            pag_formatado = {
+                "id_pagamento": pagamento["id_pagamento"],
+                "data_pagamento": pagamento["data_pagamento"],
+                "valor": float(pagamento["valor"]),
+                "tipo_pagamento": pagamento["tipo_pagamento"],
+                "forma_pagamento": pagamento.get("forma_pagamento", "N/A"),
+                "descricao": pagamento.get("descricao", ""),
+                "origem_extrato": pagamento.get("origem_extrato", False),
+                "nome_responsavel": pagamento["responsaveis"]["nome"] if pagamento.get("responsaveis") else "N/A"
+            }
+            pagamentos.append(pag_formatado)
+            total_pago += pag_formatado["valor"]
+        
+        # 4. Buscar mensalidades do aluno
+        mensalidades_response = supabase.table("mensalidades").select("""
+            id_mensalidade, mes_referencia, valor, data_vencimento, 
+            status, observacoes, data_pagamento
+        """).eq("id_aluno", id_aluno).order("data_vencimento", desc=True).execute()
+        
+        mensalidades = []
+        for mensalidade in mensalidades_response.data:
+            # Calcular status real baseado na data
+            from datetime import datetime
+            data_hoje = datetime.now().date()
+            data_vencimento = datetime.strptime(mensalidade["data_vencimento"], "%Y-%m-%d").date()
+            
+            if mensalidade["status"] in ["Pago", "Pago parcial"]:
+                status_real = mensalidade["status"]
+                status_cor = "success" if status_real == "Pago" else "warning"
+            elif data_vencimento < data_hoje:
+                status_real = "Vencida"
+                status_cor = "error"
+            else:
+                status_real = "A vencer"
+                status_cor = "info"
+            
+            mens_formatada = {
+                "id_mensalidade": mensalidade["id_mensalidade"],
+                "mes_referencia": mensalidade["mes_referencia"],
+                "valor": float(mensalidade["valor"]),
+                "data_vencimento": mensalidade["data_vencimento"],
+                "status": mensalidade["status"],
+                "status_real": status_real,
+                "status_cor": status_cor,
+                "observacoes": mensalidade.get("observacoes"),
+                "data_pagamento": mensalidade.get("data_pagamento")
+            }
+            mensalidades.append(mens_formatada)
+        
+        # 5. Calcular estatísticas
+        mensalidades_pagas = len([m for m in mensalidades if m["status"] in ["Pago", "Pago parcial"]])
+        mensalidades_pendentes = len([m for m in mensalidades if m["status_real"] in ["A vencer", "Vencida"]])
+        mensalidades_vencidas = len([m for m in mensalidades if m["status_real"] == "Vencida"])
+        
+        # Formatar dados do aluno
+        aluno_formatado = {
+            "id": aluno["id"],
+            "nome": aluno["nome"],
+            "turma_nome": aluno["turmas"]["nome_turma"],
+            "turma_id": aluno["turmas"]["id"],
+            "turno": aluno.get("turno", "N/A"),
+            "data_nascimento": aluno.get("data_nascimento"),
+            "dia_vencimento": aluno.get("dia_vencimento"),
+            "data_matricula": aluno.get("data_matricula"),
+            "valor_mensalidade": float(aluno.get("valor_mensalidade", 0)),
+            "mensalidades_geradas": aluno.get("mensalidades_geradas", False)
+        }
+        
+        # Estatísticas financeiras
+        estatisticas = {
+            "total_responsaveis": len(responsaveis),
+            "total_pagamentos": len(pagamentos),
+            "total_pago": total_pago,
+            "total_mensalidades": len(mensalidades),
+            "mensalidades_pagas": mensalidades_pagas,
+            "mensalidades_pendentes": mensalidades_pendentes,
+            "mensalidades_vencidas": mensalidades_vencidas,
+            "valor_mensalidade": aluno_formatado["valor_mensalidade"]
+        }
+        
+        return {
+            "success": True,
+            "aluno": aluno_formatado,
+            "responsaveis": responsaveis,
+            "pagamentos": pagamentos,
+            "mensalidades": mensalidades,
+            "estatisticas": estatisticas
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ==========================================================
+# 📅 FUNÇÕES DE GERAÇÃO DE MENSALIDADES
+# ==========================================================
+
+def gerar_mensalidades_aluno(id_aluno: str, 
+                            automatico: bool = True,
+                            numero_parcelas: Optional[int] = None,
+                            data_primeira_parcela: Optional[str] = None) -> Dict:
+    """
+    Gera mensalidades para um aluno baseado na data de matrícula
+    
+    Args:
+        id_aluno: ID do aluno
+        automatico: Se True, gera do mês seguinte à matrícula até dezembro
+        numero_parcelas: Número de parcelas (usado quando automatico=False)
+        data_primeira_parcela: Data da primeira parcela YYYY-MM-DD (usado quando automatico=False)
+    
+    Returns:
+        Dict com resultado da operação
+    """
+    try:
+        # 1. Buscar dados do aluno
+        aluno_response = supabase.table("alunos").select("""
+            id, nome, data_matricula, dia_vencimento, valor_mensalidade, mensalidades_geradas
+        """).eq("id", id_aluno).execute()
+        
+        if not aluno_response.data:
+            return {"success": False, "error": f"Aluno com ID {id_aluno} não encontrado"}
+        
+        aluno = aluno_response.data[0]
+        
+        # 1.5. Buscar responsável financeiro do aluno
+        responsavel_response = supabase.table("alunos_responsaveis").select("""
+            id_responsavel
+        """).eq("id_aluno", id_aluno).eq("responsavel_financeiro", True).execute()
+        
+        id_responsavel_financeiro = None
+        if responsavel_response.data:
+            id_responsavel_financeiro = responsavel_response.data[0]["id_responsavel"]
+        else:
+            # Se não há responsável financeiro marcado, buscar qualquer responsável
+            resp_qualquer = supabase.table("alunos_responsaveis").select("""
+                id_responsavel
+            """).eq("id_aluno", id_aluno).limit(1).execute()
+            
+            if resp_qualquer.data:
+                id_responsavel_financeiro = resp_qualquer.data[0]["id_responsavel"]
+            else:
+                return {"success": False, "error": "Aluno não possui responsável vinculado"}
+        
+        if not id_responsavel_financeiro:
+            return {"success": False, "error": "Não foi possível identificar responsável financeiro do aluno"}
+        
+        # 2. Validar pré-requisitos
+        if not aluno.get('data_matricula'):
+            return {"success": False, "error": "Aluno não possui data de matrícula"}
+        
+        if not aluno.get('dia_vencimento'):
+            return {"success": False, "error": "Aluno não possui dia de vencimento configurado"}
+        
+        if not aluno.get('valor_mensalidade') or float(aluno.get('valor_mensalidade', 0)) <= 0:
+            return {"success": False, "error": "Aluno não possui valor de mensalidade configurado"}
+        
+        # 3. Verificar se tem pagamento de matrícula
+        matricula_response = supabase.table("pagamentos").select("id_pagamento").eq(
+            "id_aluno", id_aluno
+        ).eq("tipo_pagamento", "matricula").execute()
+        
+        if not matricula_response.data:
+            return {"success": False, "error": "Aluno não possui pagamento de matrícula registrado"}
+        
+        # 4. Verificar se já tem mensalidades geradas
+        if aluno.get('mensalidades_geradas'):
+            return {"success": False, "error": "Aluno já possui mensalidades geradas"}
+        
+        # 5. Calcular datas das mensalidades
+        from datetime import datetime, timedelta
+        try:
+            from dateutil.relativedelta import relativedelta
+        except ImportError:
+            # Fallback se dateutil não estiver disponível
+            def relativedelta(months=0):
+                class RelativeDelta:
+                    def __init__(self, months):
+                        self.months = months
+                return RelativeDelta(months)
+        
+        data_matricula = datetime.strptime(aluno['data_matricula'], '%Y-%m-%d').date()
+        dia_vencimento = int(aluno['dia_vencimento'])
+        valor_mensalidade = float(aluno['valor_mensalidade'])
+        
+        mensalidades_para_criar = []
+        
+        if automatico:
+            # Modo automático: do mês seguinte à matrícula até dezembro
+            mes_matricula = data_matricula.month
+            ano_matricula = data_matricula.year
+            
+            # Regra especial: se matrícula foi em dezembro, começar em fevereiro do ano seguinte
+            if mes_matricula == 12:
+                mes_inicio = 2
+                ano_inicio = ano_matricula + 1
+            else:
+                mes_inicio = mes_matricula + 1
+                ano_inicio = ano_matricula
+            
+            # Gerar mensalidades até dezembro
+            mes_atual = mes_inicio
+            ano_atual = ano_inicio
+            
+            while mes_atual <= 12:
+                try:
+                    # Calcular data de vencimento
+                    data_vencimento = datetime(ano_atual, mes_atual, dia_vencimento).date()
+                    
+                    # Nome do mês
+                    nomes_meses = [
+                        "", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+                    ]
+                    mes_referencia = f"{nomes_meses[mes_atual]}/{ano_atual}"
+                    
+                    mensalidades_para_criar.append({
+                        "mes_referencia": mes_referencia,
+                        "data_vencimento": data_vencimento.isoformat(),
+                        "valor": valor_mensalidade
+                    })
+                    
+                    mes_atual += 1
+                    
+                except ValueError:
+                    # Dia não existe no mês (ex: 31 de fevereiro)
+                    # Usar último dia do mês
+                    import calendar
+                    ultimo_dia = calendar.monthrange(ano_atual, mes_atual)[1]
+                    data_vencimento = datetime(ano_atual, mes_atual, min(dia_vencimento, ultimo_dia)).date()
+                    
+                    nomes_meses = [
+                        "", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+                    ]
+                    mes_referencia = f"{nomes_meses[mes_atual]}/{ano_atual}"
+                    
+                    mensalidades_para_criar.append({
+                        "mes_referencia": mes_referencia,
+                        "data_vencimento": data_vencimento.isoformat(),
+                        "valor": valor_mensalidade
+                    })
+                    
+                    mes_atual += 1
+        
+        else:
+            # Modo manual: usar número de parcelas e data da primeira parcela
+            if not numero_parcelas or numero_parcelas <= 0:
+                return {"success": False, "error": "Número de parcelas deve ser maior que zero"}
+            
+            if not data_primeira_parcela:
+                return {"success": False, "error": "Data da primeira parcela é obrigatória"}
+            
+            try:
+                data_primeira = datetime.strptime(data_primeira_parcela, '%Y-%m-%d').date()
+            except:
+                return {"success": False, "error": "Data da primeira parcela deve estar no formato YYYY-MM-DD"}
+            
+            # Gerar mensalidades baseadas na primeira data
+            for i in range(numero_parcelas):
+                # Calcular próximo mês
+                mes_atual = data_primeira.month + i
+                ano_atual = data_primeira.year
+                
+                # Ajustar ano se necessário
+                while mes_atual > 12:
+                    mes_atual -= 12
+                    ano_atual += 1
+                
+                try:
+                    data_vencimento = datetime(ano_atual, mes_atual, dia_vencimento).date()
+                except ValueError:
+                    # Dia não existe no mês
+                    import calendar
+                    ultimo_dia = calendar.monthrange(ano_atual, mes_atual)[1]
+                    data_vencimento = datetime(ano_atual, mes_atual, min(dia_vencimento, ultimo_dia)).date()
+                
+                # Nome do mês
+                nomes_meses = [
+                    "", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+                ]
+                mes_referencia = f"{nomes_meses[mes_atual]}/{ano_atual}"
+                
+                mensalidades_para_criar.append({
+                    "mes_referencia": mes_referencia,
+                    "data_vencimento": data_vencimento.isoformat(),
+                    "valor": valor_mensalidade
+                })
+        
+        # 6. Criar mensalidades no banco
+        mensalidades_criadas = []
+        
+        for mensalidade_data in mensalidades_para_criar:
+            id_mensalidade = f"MENS_{str(uuid.uuid4().int)[:8].upper()}"
+            
+            dados_mensalidade = {
+                "id_mensalidade": id_mensalidade,
+                "id_aluno": id_aluno,
+                "id_responsavel": id_responsavel_financeiro,
+                "mes_referencia": mensalidade_data["mes_referencia"],
+                "valor": mensalidade_data["valor"],
+                "data_vencimento": mensalidade_data["data_vencimento"],
+                "status": "A vencer",
+                "inserted_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            }
+            
+            response = supabase.table("mensalidades").insert(dados_mensalidade).execute()
+            
+            if response.data:
+                mensalidades_criadas.append(response.data[0])
+            else:
+                # Se falhar, tentar reverter as já criadas
+                for mens_criada in mensalidades_criadas:
+                    supabase.table("mensalidades").delete().eq("id_mensalidade", mens_criada["id_mensalidade"]).execute()
+                
+                return {
+                    "success": False, 
+                    "error": f"Erro ao criar mensalidade {mensalidade_data['mes_referencia']}"
+                }
+        
+        # 7. Marcar aluno como tendo mensalidades geradas
+        supabase.table("alunos").update({
+            "mensalidades_geradas": True,
+            "updated_at": datetime.now().isoformat()
+        }).eq("id", id_aluno).execute()
+        
+        return {
+            "success": True,
+            "mensalidades_criadas": len(mensalidades_criadas),
+            "mensalidades": mensalidades_criadas,
+            "modo": "automático" if automatico else "manual",
+            "aluno_nome": aluno["nome"],
+            "message": f"{len(mensalidades_criadas)} mensalidades geradas para {aluno['nome']}"
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def verificar_pode_gerar_mensalidades(id_aluno: str) -> Dict:
+    """
+    Verifica se um aluno pode ter mensalidades geradas
+    
+    Args:
+        id_aluno: ID do aluno
+        
+    Returns:
+        Dict com resultado da verificação
+    """
+    try:
+        # Buscar dados do aluno
+        aluno_response = supabase.table("alunos").select("""
+            id, nome, data_matricula, dia_vencimento, valor_mensalidade, mensalidades_geradas
+        """).eq("id", id_aluno).execute()
+        
+        if not aluno_response.data:
+            return {"success": False, "error": f"Aluno com ID {id_aluno} não encontrado"}
+        
+        aluno = aluno_response.data[0]
+        
+        # Verificar condições
+        condicoes = {
+            "tem_data_matricula": bool(aluno.get('data_matricula')),
+            "tem_dia_vencimento": bool(aluno.get('dia_vencimento')),
+            "tem_valor_mensalidade": bool(aluno.get('valor_mensalidade')) and float(aluno.get('valor_mensalidade', 0)) > 0,
+            "ja_tem_mensalidades": bool(aluno.get('mensalidades_geradas')),
+            "tem_pagamento_matricula": False,
+            "tem_responsavel": False
+        }
+        
+        # Verificar pagamento de matrícula
+        matricula_response = supabase.table("pagamentos").select("id_pagamento").eq(
+            "id_aluno", id_aluno
+        ).eq("tipo_pagamento", "matricula").execute()
+        
+        condicoes["tem_pagamento_matricula"] = bool(matricula_response.data)
+        
+        # Verificar se tem responsável vinculado
+        responsavel_response = supabase.table("alunos_responsaveis").select("id_responsavel").eq("id_aluno", id_aluno).execute()
+        condicoes["tem_responsavel"] = bool(responsavel_response.data)
+        
+        # Determinar se pode gerar
+        pode_gerar = (
+            condicoes["tem_data_matricula"] and
+            condicoes["tem_dia_vencimento"] and
+            condicoes["tem_valor_mensalidade"] and
+            condicoes["tem_pagamento_matricula"] and
+            condicoes["tem_responsavel"] and
+            not condicoes["ja_tem_mensalidades"]
+        )
+        
+        # Preparar mensagens
+        problemas = []
+        if not condicoes["tem_data_matricula"]:
+            problemas.append("❌ Falta data de matrícula")
+        if not condicoes["tem_dia_vencimento"]:
+            problemas.append("❌ Falta dia de vencimento")
+        if not condicoes["tem_valor_mensalidade"]:
+            problemas.append("❌ Falta valor da mensalidade")
+        if not condicoes["tem_pagamento_matricula"]:
+            problemas.append("❌ Falta pagamento de matrícula")
+        if not condicoes["tem_responsavel"]:
+            problemas.append("❌ Falta responsável vinculado")
+        if condicoes["ja_tem_mensalidades"]:
+            problemas.append("⚠️ Já possui mensalidades geradas")
+        
+        return {
+            "success": True,
+            "pode_gerar": pode_gerar,
+            "condicoes": condicoes,
+            "problemas": problemas,
+            "aluno": aluno
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
     print("🧪 Testando funções otimizadas...")

@@ -13,8 +13,8 @@ from supabase import create_client
 load_dotenv()
 sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-CSV_PATH   = "pix_20-12-24_12-06-25_processados.csv"
-TABLE_NAME = "extrato_pix_novo"
+CSV_PATH   = "recebimentos_11_06_03_07.csv"
+TABLE_NAME = "extrato_pix"
 BATCH      = 500          # lote de inserção
 
 # ─── Helpers ───────────────────────────────────────────────
@@ -37,8 +37,14 @@ def load_csv(path: str) -> pd.DataFrame:
             .assign(
                 nome_remetente=lambda d: d["nome_remetente"].map(normalize),
                 data_pagamento=lambda d: pd.to_datetime(
-                    d["data_pagamento"], dayfirst=True
-                ).dt.date.astype(str),
+                    d["data_pagamento"],
+                    format='%m/%d/%Y',
+                    errors='coerce'
+                ).fillna(pd.to_datetime(
+                    d["data_pagamento"],
+                    format='%d/%m/%Y',
+                    errors='coerce'
+                )).dt.date.astype(str),
                 chave_pix      = lambda d: d["chave_pix"].fillna(""),
                 status         = "novo",
                 id_responsavel = None,
