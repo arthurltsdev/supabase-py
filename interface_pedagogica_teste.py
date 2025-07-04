@@ -16,6 +16,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 from typing import Dict, List, Optional
+import os
 
 # Importar funções do modelo pedagógico
 from models.pedagogico import (
@@ -578,37 +579,489 @@ def main():
     # TAB 6: RELATÓRIOS
     # ==========================================================
     with tab6:
-        st.header("📊 Relatórios e Estatísticas")
+        st.header("📊 Relatórios e Geração de Documentos")
         
-        # Estatísticas gerais
+        # Importar funções de relatórios
+        try:
+            from funcoes_relatorios import (
+                gerar_relatorio_interface,
+                obter_campos_disponiveis,
+                limpar_arquivos_temporarios,
+                DOCX_AVAILABLE,
+                OPENAI_AVAILABLE
+            )
+            relatorios_disponivel = True
+        except ImportError as e:
+            st.error(f"❌ Erro ao importar módulo de relatórios: {e}")
+            relatorios_disponivel = False
+        
+        if not relatorios_disponivel:
+            st.warning("⚠️ Módulo de relatórios não disponível")
+            st.info("💡 Certifique-se de que o arquivo funcoes_relatorios.py está presente")
+            return
+        
+        # Verificar dependências
+        if not DOCX_AVAILABLE:
+            st.error("❌ python-docx não instalado")
+            st.info("💡 Execute: pip install python-docx")
+            return
+        
+        # Status das dependências
+        col_dep1, col_dep2, col_dep3 = st.columns(3)
+        
+        with col_dep1:
+            if DOCX_AVAILABLE:
+                st.success("✅ python-docx disponível")
+            else:
+                st.error("❌ python-docx não disponível")
+        
+        with col_dep2:
+            if OPENAI_AVAILABLE:
+                st.success("✅ OpenAI disponível")
+            else:
+                st.warning("⚠️ OpenAI não disponível")
+        
+        with col_dep3:
+            if os.getenv("OPENAI_API_KEY"):
+                st.success("✅ API Key configurada")
+            else:
+                st.warning("⚠️ API Key não configurada")
+        
+        # Tabs de tipos de relatórios
+        tab_pedagogico, tab_financeiro, tab_historico = st.tabs([
+            "🎓 Relatório Pedagógico",
+            "💰 Relatório Financeiro", 
+            "📋 Histórico de Relatórios"
+        ])
+        
+        # ==========================================================
+        # RELATÓRIO PEDAGÓGICO
+        # ==========================================================
+        with tab_pedagogico:
+            st.subheader("🎓 Relatório Pedagógico")
+            st.info("Gera relatório com dados dos alunos e responsáveis das turmas selecionadas")
+            
+            # Seleção de turmas
+            st.markdown("### 🎓 Seleção de Turmas")
+            turmas_resultado = listar_turmas_disponiveis()
+            
+            if turmas_resultado.get("success"):
+                turmas_selecionadas_ped = st.multiselect(
+                    "Selecione as turmas para o relatório:",
+                    options=turmas_resultado["turmas"],
+                    help="Selecione uma ou mais turmas"
+                )
+            else:
+                st.error("Erro ao carregar turmas")
+                turmas_selecionadas_ped = []
+            
+            # Seleção de campos
+            st.markdown("### 📋 Seleção de Campos")
+            
+            campos_disponiveis = obter_campos_disponiveis()
+            
+            col_aluno, col_responsavel = st.columns(2)
+            
+            with col_aluno:
+                st.markdown("**👨‍🎓 Campos do Aluno:**")
+                campos_aluno_selecionados = []
+                
+                for campo, descricao in campos_disponiveis["aluno"].items():
+                    if st.checkbox(descricao, key=f"ped_aluno_{campo}", value=(campo == 'nome')):
+                        campos_aluno_selecionados.append(campo)
+            
+            with col_responsavel:
+                st.markdown("**👥 Campos do Responsável:**")
+                campos_responsavel_selecionados = []
+                
+                for campo, descricao in campos_disponiveis["responsavel"].items():
+                    if st.checkbox(descricao, key=f"ped_resp_{campo}"):
+                        campos_responsavel_selecionados.append(campo)
+            
+            # Visualizar seleção
+            if campos_aluno_selecionados or campos_responsavel_selecionados:
+                st.markdown("### 👀 Campos Selecionados")
+                
+                col_preview1, col_preview2 = st.columns(2)
+                
+                with col_preview1:
+                    if campos_aluno_selecionados:
+                        st.success(f"**👨‍🎓 Aluno:** {len(campos_aluno_selecionados)} campos")
+                        for campo in campos_aluno_selecionados:
+                            st.write(f"   ✅ {campos_disponiveis['aluno'][campo]}")
+                
+                with col_preview2:
+                    if campos_responsavel_selecionados:
+                        st.success(f"**👥 Responsável:** {len(campos_responsavel_selecionados)} campos")
+                        for campo in campos_responsavel_selecionados:
+                            st.write(f"   ✅ {campos_disponiveis['responsavel'][campo]}")
+            
+            # Botão de geração
+            st.markdown("---")
+            
+            if st.button("📊 Gerar Relatório Pedagógico", type="primary", use_container_width=True):
+                if not turmas_selecionadas_ped:
+                    st.error("❌ Selecione pelo menos uma turma")
+                elif not (campos_aluno_selecionados or campos_responsavel_selecionados):
+                    st.error("❌ Selecione pelo menos um campo")
+                else:
+                    # Combinar campos selecionados
+                    todos_campos = campos_aluno_selecionados + campos_responsavel_selecionados
+                    
+                    # Configuração do relatório
+                    configuracao = {
+                        'turmas_selecionadas': turmas_selecionadas_ped,
+                        'campos_selecionados': todos_campos
+                    }
+                    
+                    # Gerar relatório
+                    with st.spinner("🤖 Gerando relatório pedagógico..."):
+                        resultado = gerar_relatorio_interface('pedagogico', configuracao)
+                    
+                    if resultado.get("success"):
+                        st.success("✅ Relatório gerado com sucesso!")
+                        
+                        # Informações do relatório
+                        col_info1, col_info2, col_info3 = st.columns(3)
+                        
+                        with col_info1:
+                            st.metric("👨‍🎓 Total de Alunos", resultado["total_alunos"])
+                        
+                        with col_info2:
+                            st.metric("🎓 Turmas", len(resultado["turmas_incluidas"]))
+                        
+                        with col_info3:
+                            st.metric("📋 Campos", len(resultado["campos_selecionados"]))
+                        
+                        # Botão de download
+                        if os.path.exists(resultado["arquivo"]):
+                            with open(resultado["arquivo"], "rb") as file:
+                                st.download_button(
+                                    label="📥 Baixar Relatório (.docx)",
+                                    data=file.read(),
+                                    file_name=resultado["nome_arquivo"],
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    type="primary",
+                                    use_container_width=True
+                                )
+                        
+                        # Salvar no histórico
+                        adicionar_historico("Geração de Relatório Pedagógico", resultado)
+                    
+                    else:
+                        st.error(f"❌ Erro na geração: {resultado.get('error')}")
+        
+        # ==========================================================
+        # RELATÓRIO FINANCEIRO
+        # ==========================================================
+        with tab_financeiro:
+            st.subheader("💰 Relatório Financeiro")
+            st.info("Gera relatório financeiro com dados de alunos, mensalidades, pagamentos e extrato PIX")
+            
+            # Seleção de turmas
+            st.markdown("### 🎓 Seleção de Turmas")
+            if turmas_resultado.get("success"):
+                turmas_selecionadas_fin = st.multiselect(
+                    "Selecione as turmas para o relatório financeiro:",
+                    options=turmas_resultado["turmas"],
+                    help="Selecione uma ou mais turmas",
+                    key="turmas_fin"
+                )
+            else:
+                st.error("Erro ao carregar turmas")
+                turmas_selecionadas_fin = []
+            
+            # Seleção de campos por categoria
+            st.markdown("### 📋 Seleção de Dados")
+            
+            # Campos básicos (aluno + responsável)
+            col_basic1, col_basic2 = st.columns(2)
+            
+            with col_basic1:
+                st.markdown("**👨‍🎓 Dados do Aluno:**")
+                incluir_aluno = st.checkbox("Incluir dados do aluno", value=True, key="fin_aluno")
+                
+                if incluir_aluno:
+                    campos_aluno_fin = []
+                    for campo, descricao in campos_disponiveis["aluno"].items():
+                        if st.checkbox(descricao, key=f"fin_aluno_{campo}", value=(campo == 'nome')):
+                            campos_aluno_fin.append(campo)
+                else:
+                    campos_aluno_fin = []
+            
+            with col_basic2:
+                st.markdown("**👥 Dados do Responsável:**")
+                incluir_responsavel = st.checkbox("Incluir dados do responsável", key="fin_responsavel")
+                
+                if incluir_responsavel:
+                    campos_responsavel_fin = []
+                    for campo, descricao in campos_disponiveis["responsavel"].items():
+                        if st.checkbox(descricao, key=f"fin_resp_{campo}"):
+                            campos_responsavel_fin.append(campo)
+                else:
+                    campos_responsavel_fin = []
+            
+            # Dados financeiros específicos
+            st.markdown("---")
+            col_fin1, col_fin2, col_fin3 = st.columns(3)
+            
+            with col_fin1:
+                st.markdown("**📅 Mensalidades:**")
+                incluir_mensalidades = st.checkbox("Incluir mensalidades", key="fin_mensalidades")
+                
+                if incluir_mensalidades:
+                    st.markdown("**Status das Mensalidades:**")
+                    status_mensalidades = []
+                    
+                    for status in ['A vencer', 'Pago', 'Atrasado', 'Cancelado', 'Baixado']:
+                        if st.checkbox(status, key=f"status_mens_{status}"):
+                            status_mensalidades.append(status)
+                    
+                    campos_mensalidade_fin = []
+                    for campo, descricao in campos_disponiveis["mensalidade"].items():
+                        if st.checkbox(descricao, key=f"fin_mens_{campo}"):
+                            campos_mensalidade_fin.append(campo)
+                else:
+                    status_mensalidades = []
+                    campos_mensalidade_fin = []
+            
+            with col_fin2:
+                st.markdown("**💳 Pagamentos:**")
+                incluir_pagamentos = st.checkbox("Incluir pagamentos", key="fin_pagamentos")
+                
+                if incluir_pagamentos:
+                    campos_pagamento_fin = []
+                    for campo, descricao in campos_disponiveis["pagamento"].items():
+                        if st.checkbox(descricao, key=f"fin_pag_{campo}"):
+                            campos_pagamento_fin.append(campo)
+                else:
+                    campos_pagamento_fin = []
+            
+            with col_fin3:
+                st.markdown("**📊 Extrato PIX:**")
+                incluir_extrato = st.checkbox("Incluir extrato PIX", key="fin_extrato")
+                
+                if incluir_extrato:
+                    st.markdown("**Status do Extrato:**")
+                    incluir_processados = st.checkbox("Processados", key="extrato_processados")
+                    incluir_nao_processados = st.checkbox("Não Processados", key="extrato_nao_processados")
+                    
+                    campos_extrato_fin = []
+                    for campo, descricao in campos_disponiveis["extrato_pix"].items():
+                        if st.checkbox(descricao, key=f"fin_ext_{campo}"):
+                            campos_extrato_fin.append(campo)
+                else:
+                    incluir_processados = False
+                    incluir_nao_processados = False
+                    campos_extrato_fin = []
+            
+            # Filtro de período
+            st.markdown("---")
+            st.markdown("### 📅 Filtro de Período")
+            
+            usar_filtro_periodo = st.checkbox("Aplicar filtro de período", key="usar_periodo")
+            
+            if usar_filtro_periodo:
+                col_data1, col_data2 = st.columns(2)
+                
+                with col_data1:
+                    data_inicio = st.date_input("Data de Início:", key="data_inicio_fin")
+                
+                with col_data2:
+                    data_fim = st.date_input("Data de Fim:", key="data_fim_fin")
+            else:
+                data_inicio = None
+                data_fim = None
+            
+            # Visualizar seleção
+            st.markdown("### 👀 Resumo da Seleção")
+            
+            total_campos = len(campos_aluno_fin) + len(campos_responsavel_fin) + len(campos_mensalidade_fin) + len(campos_pagamento_fin) + len(campos_extrato_fin)
+            
+            col_resumo1, col_resumo2, col_resumo3 = st.columns(3)
+            
+            with col_resumo1:
+                st.metric("📋 Total de Campos", total_campos)
+            
+            with col_resumo2:
+                categorias_incluidas = sum([
+                    1 if campos_aluno_fin else 0,
+                    1 if campos_responsavel_fin else 0,
+                    1 if campos_mensalidade_fin else 0,
+                    1 if campos_pagamento_fin else 0,
+                    1 if campos_extrato_fin else 0
+                ])
+                st.metric("📊 Categorias", categorias_incluidas)
+            
+            with col_resumo3:
+                st.metric("🎓 Turmas", len(turmas_selecionadas_fin))
+            
+            # Botão de geração
+            st.markdown("---")
+            
+            if st.button("💰 Gerar Relatório Financeiro", type="primary", use_container_width=True):
+                if not turmas_selecionadas_fin:
+                    st.error("❌ Selecione pelo menos uma turma")
+                elif total_campos == 0:
+                    st.error("❌ Selecione pelo menos um campo")
+                else:
+                    # Combinar todos os campos
+                    todos_campos_fin = campos_aluno_fin + campos_responsavel_fin + campos_mensalidade_fin + campos_pagamento_fin + campos_extrato_fin
+                    
+                    # Configurar filtros
+                    filtros = {}
+                    
+                    if usar_filtro_periodo:
+                        if data_inicio:
+                            filtros['periodo_inicio'] = data_inicio.isoformat()
+                        if data_fim:
+                            filtros['periodo_fim'] = data_fim.isoformat()
+                    
+                    if incluir_mensalidades and status_mensalidades:
+                        filtros['status_mensalidades'] = status_mensalidades
+                    
+                    if incluir_extrato:
+                        filtros['extrato_pix_processados'] = incluir_processados
+                        filtros['extrato_pix_nao_processados'] = incluir_nao_processados
+                    
+                    # Configuração do relatório
+                    configuracao = {
+                        'turmas_selecionadas': turmas_selecionadas_fin,
+                        'campos_selecionados': todos_campos_fin,
+                        'filtros': filtros
+                    }
+                    
+                    # Gerar relatório
+                    with st.spinner("🤖 Gerando relatório financeiro..."):
+                        resultado = gerar_relatorio_interface('financeiro', configuracao)
+                    
+                    if resultado.get("success"):
+                        st.success("✅ Relatório financeiro gerado com sucesso!")
+                        
+                        # Informações do relatório
+                        col_info1, col_info2, col_info3 = st.columns(3)
+                        
+                        with col_info1:
+                            st.metric("👨‍🎓 Total de Alunos", resultado["total_alunos"])
+                        
+                        with col_info2:
+                            st.metric("🎓 Turmas", len(resultado["turmas_incluidas"]))
+                        
+                        with col_info3:
+                            st.metric("📋 Campos", len(resultado["campos_selecionados"]))
+                        
+                        # Mostrar filtros aplicados
+                        if resultado.get("filtros_aplicados"):
+                            st.info(f"🔍 Filtros aplicados: {len(resultado['filtros_aplicados'])}")
+                        
+                        # Botão de download
+                        if os.path.exists(resultado["arquivo"]):
+                            with open(resultado["arquivo"], "rb") as file:
+                                st.download_button(
+                                    label="📥 Baixar Relatório Financeiro (.docx)",
+                                    data=file.read(),
+                                    file_name=resultado["nome_arquivo"],
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    type="primary",
+                                    use_container_width=True
+                                )
+                        
+                        # Salvar no histórico
+                        adicionar_historico("Geração de Relatório Financeiro", resultado)
+                    
+                    else:
+                        st.error(f"❌ Erro na geração: {resultado.get('error')}")
+        
+        # ==========================================================
+        # HISTÓRICO DE RELATÓRIOS
+        # ==========================================================
+        with tab_historico:
+            st.subheader("📋 Histórico de Relatórios Gerados")
+            
+            # Filtrar apenas operações de relatórios
+            relatorios_historico = [
+                op for op in st.session_state.historico_operacoes 
+                if 'relatório' in op['operacao'].lower()
+            ]
+            
+            if relatorios_historico:
+                st.success(f"📊 **{len(relatorios_historico)} relatórios** gerados nesta sessão")
+                
+                # Botão para limpar arquivos antigos
+                col_btn1, col_btn2 = st.columns(2)
+                
+                with col_btn1:
+                    if st.button("🧹 Limpar Arquivos Temporários", help="Remove relatórios com mais de 24h"):
+                        limpar_arquivos_temporarios()
+                        st.success("✅ Limpeza executada")
+                
+                with col_btn2:
+                    if st.button("🔄 Atualizar Lista"):
+                        st.rerun()
+                
+                # Lista de relatórios
+                st.markdown("### 📄 Relatórios Gerados")
+                
+                for i, relatorio in enumerate(reversed(relatorios_historico), 1):
+                    timestamp = relatorio['timestamp'].strftime("%d/%m/%Y %H:%M:%S")
+                    detalhes = relatorio.get('detalhes', {})
+                    
+                    with st.expander(f"📊 {i}. {relatorio['operacao']} - {timestamp}", expanded=False):
+                        col_det1, col_det2 = st.columns(2)
+                        
+                        with col_det1:
+                            if detalhes.get('titulo'):
+                                st.write(f"**📋 Título:** {detalhes['titulo']}")
+                            if detalhes.get('total_alunos'):
+                                st.write(f"**👨‍🎓 Alunos:** {detalhes['total_alunos']}")
+                            if detalhes.get('turmas_incluidas'):
+                                st.write(f"**🎓 Turmas:** {', '.join(detalhes['turmas_incluidas'])}")
+                        
+                        with col_det2:
+                            if detalhes.get('campos_selecionados'):
+                                st.write(f"**📋 Campos:** {len(detalhes['campos_selecionados'])}")
+                            if detalhes.get('arquivo'):
+                                st.write(f"**📁 Arquivo:** {detalhes.get('nome_arquivo', 'N/A')}")
+                                
+                                # Verificar se arquivo ainda existe
+                                if os.path.exists(detalhes['arquivo']):
+                                    with open(detalhes['arquivo'], "rb") as file:
+                                        st.download_button(
+                                            label="📥 Baixar Novamente",
+                                            data=file.read(),
+                                            file_name=detalhes.get('nome_arquivo', 'relatorio.docx'),
+                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            key=f"download_hist_{i}"
+                                        )
+                                else:
+                                    st.warning("⚠️ Arquivo não encontrado (pode ter sido removido)")
+            else:
+                st.info("ℹ️ Nenhum relatório gerado ainda nesta sessão")
+                st.info("💡 Use as abas acima para gerar relatórios pedagógicos ou financeiros")
+        
+        # Estatísticas gerais (mantidas da versão anterior)
+        st.markdown("---")
+        st.markdown("### 📊 Estatísticas Gerais")
+        
         col1, col2, col3 = st.columns(3)
         
-        # Aqui você pode adicionar estatísticas gerais
         with col1:
-            st.metric("🎓 Turmas", "Carregando...")
+            if turmas_resultado.get("success"):
+                st.metric("🎓 Turmas Disponíveis", turmas_resultado["count"])
+            else:
+                st.metric("🎓 Turmas", "Erro")
         
         with col2:
-            st.metric("👨‍🎓 Alunos", "Carregando...")
+            # Contar relatórios gerados
+            total_relatorios = len([op for op in st.session_state.historico_operacoes if 'relatório' in op['operacao'].lower()])
+            st.metric("📊 Relatórios Gerados", total_relatorios)
         
         with col3:
-            st.metric("👤 Responsáveis", "Carregando...")
-        
-        # Histórico detalhado
-        st.subheader("📋 Histórico Detalhado de Operações")
-        
-        if st.session_state.historico_operacoes:
-            df_historico = pd.DataFrame([
-                {
-                    "Timestamp": op["timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
-                    "Operação": op["operacao"],
-                    "Detalhes": str(op["detalhes"])
-                }
-                for op in st.session_state.historico_operacoes
-            ])
-            
-            st.dataframe(df_historico, use_container_width=True)
-        else:
-            st.info("Nenhuma operação realizada ainda")
+            # Status do sistema
+            if DOCX_AVAILABLE and relatorios_disponivel:
+                st.metric("✅ Sistema", "Operacional")
+            else:
+                st.metric("⚠️ Sistema", "Dependências")
 
 # ==========================================================
 # 🔧 FUNÇÕES DE INTERFACE

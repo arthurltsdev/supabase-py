@@ -193,10 +193,10 @@ def buscar_alunos_por_turmas(ids_turmas: List[str]) -> Dict:
                     "alunos": []
                 }
             
-            # Buscar responsáveis do aluno
+            # Buscar responsáveis do aluno com todos os campos
             responsaveis_response = supabase.table("alunos_responsaveis").select("""
                 tipo_relacao, responsavel_financeiro,
-                responsaveis!inner(nome)
+                responsaveis!inner(id, nome, cpf, telefone, email, endereco)
             """).eq("id_aluno", aluno["id"]).execute()
             
             # Organizar responsáveis
@@ -205,7 +205,12 @@ def buscar_alunos_por_turmas(ids_turmas: List[str]) -> Dict:
             
             for vinculo in responsaveis_response.data:
                 resp_info = {
+                    "id": vinculo["responsaveis"]["id"],
                     "nome": vinculo["responsaveis"]["nome"],
+                    "cpf": vinculo["responsaveis"].get("cpf"),
+                    "telefone": vinculo["responsaveis"].get("telefone"), 
+                    "email": vinculo["responsaveis"].get("email"),
+                    "endereco": vinculo["responsaveis"].get("endereco"),
                     "tipo_relacao": vinculo.get("tipo_relacao", "responsável"),
                     "responsavel_financeiro": vinculo.get("responsavel_financeiro", False)
                 }
