@@ -14,7 +14,7 @@ Interface Streamlit para testar todas as funcionalidades do modelo pedagógico:
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional
 import os
 
@@ -31,6 +31,8 @@ from models.pedagogico import (
     atualizar_aluno_campos,
     cadastrar_aluno_e_vincular,
     filtrar_alunos_por_campos_vazios,
+    listar_mensalidades_para_cancelamento,
+    trancar_matricula_aluno,
     
     # Gestão de responsáveis
     buscar_responsaveis_para_dropdown,
@@ -44,7 +46,25 @@ from models.pedagogico import (
     vincular_aluno_responsavel,
     atualizar_vinculo_responsavel,
     remover_vinculo_responsavel,
-    buscar_dados_completos_alunos_responsavel
+    buscar_dados_completos_alunos_responsavel,
+    
+    # Gestão de cobranças
+    listar_cobrancas_aluno,
+    cadastrar_cobranca_individual,
+    cadastrar_cobranca_parcelada,
+    atualizar_cobranca,
+    marcar_cobranca_como_paga,
+    cancelar_cobranca,
+    listar_cobrancas_por_grupo
+)
+
+# Importar constantes e funções utilitárias do models.base
+from models.base import (
+    formatar_data_br,
+    formatar_valor_br,
+    TIPOS_COBRANCA_DISPLAY,
+    PRIORIDADES_COBRANCA,
+    supabase
 )
 
 # Configuração da página
@@ -177,12 +197,13 @@ def main():
             st.info("Nenhuma operação realizada ainda")
     
     # Tabs principais
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🔍 Filtros e Consultas",
         "👨‍🎓 Gestão de Alunos", 
         "👨‍👩‍👧‍👦 Gestão de Responsáveis",
         "🔗 Gestão de Vínculos",
         "📝 Cadastros",
+        "💰 Gestão de Cobranças",
         "📊 Relatórios"
     ])
     
@@ -576,9 +597,39 @@ def main():
             mostrar_formulario_cadastro_responsavel()
     
     # ==========================================================
-    # TAB 6: RELATÓRIOS
+    # TAB 6: GESTÃO DE COBRANÇAS
     # ==========================================================
     with tab6:
+        st.header("💰 Gestão de Cobranças")
+        
+        # Sub-tabs para organizar funcionalidades
+        sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs([
+            "➕ Criar Cobranças",
+            "📋 Gerenciar Cobranças",
+            "👨‍🎓 Vincular Alunos",
+            "📊 Relatórios de Cobranças"
+        ])
+        
+        # SUB-TAB 1: CRIAR COBRANÇAS
+        with sub_tab1:
+            mostrar_interface_criar_cobrancas()
+        
+        # SUB-TAB 2: GERENCIAR COBRANÇAS  
+        with sub_tab2:
+            mostrar_interface_gerenciar_cobrancas()
+        
+        # SUB-TAB 3: VINCULAR ALUNOS
+        with sub_tab3:
+            mostrar_interface_vincular_alunos_cobrancas()
+        
+        # SUB-TAB 4: RELATÓRIOS
+        with sub_tab4:
+            mostrar_interface_relatorios_cobrancas()
+    
+    # ==========================================================
+    # TAB 7: RELATÓRIOS
+    # ==========================================================
+    with tab7:
         st.header("📊 Relatórios e Geração de Documentos")
         
         # Importar funções de relatórios
@@ -1106,12 +1157,13 @@ def mostrar_detalhes_aluno(id_aluno: str):
             st.metric("✅ Situação", "Em dia", delta="OK")
     
     # Tabs para organizar informações
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📋 Dados do Aluno", 
         "👥 Responsáveis", 
         "💰 Pagamentos", 
         "📊 Extrato PIX",
-        "📅 Mensalidades"
+        "📅 Mensalidades",
+        "💰 Cobranças"
     ])
     
     # TAB 1: Dados do Aluno (EDITÁVEIS)
@@ -1132,7 +1184,11 @@ def mostrar_detalhes_aluno(id_aluno: str):
     
     # TAB 5: Mensalidades
     with tab5:
-                                    mostrar_mensalidades_aluno(mensalidades, estatisticas, id_aluno)
+        mostrar_mensalidades_aluno(mensalidades, estatisticas, id_aluno)
+    
+    # TAB 6: Cobranças
+    with tab6:
+        mostrar_cobrancas_aluno(id_aluno, responsaveis)
     
     # Botões de ação globais
     st.markdown("---")
@@ -1482,6 +1538,10 @@ def mostrar_dados_editaveis_aluno(aluno: Dict):
     """Exibe e permite edição de todos os dados do aluno"""
     st.markdown("### 📚 Informações Acadêmicas e Financeiras")
     
+    # Verificar situação do aluno
+    situacao_atual = aluno.get('situacao', 'ativo')
+    is_trancado = situacao_atual == 'trancado'
+    
     # Exibição atual
     col1, col2 = st.columns(2)
     
@@ -1499,67 +1559,181 @@ def mostrar_dados_editaveis_aluno(aluno: Dict):
         st.info(f"**💵 Valor Mensalidade:** R$ {aluno['valor_mensalidade']:.2f}")
         st.info(f"**📆 Dia Vencimento:** {aluno.get('dia_vencimento', 'Não definido')}")
         st.info(f"**📊 Mensalidades Geradas:** {'Sim' if aluno.get('mensalidades_geradas') else 'Não'}")
+        
+        # Mostrar situação da matrícula
+        if is_trancado:
+            st.error(f"🔒 **MATRÍCULA TRANCADA**")
+            if aluno.get('data_saida'):
+                st.error(f"📅 Data de Saída: {formatar_data_br(aluno['data_saida'])}")
+            if aluno.get('motivo_saida'):
+                st.error(f"📝 Motivo: {aluno['motivo_saida']}")
+        else:
+            st.success("✅ **MATRÍCULA ATIVA**")
     
-    # Formulário de edição
-    st.markdown("---")
-    st.markdown("### ✏️ Editar Informações")
+    # Seção de trancamento de matrícula
+    if not is_trancado:
+        st.markdown("---")
+        st.markdown("### 🔒 Trancamento de Matrícula")
+        
+        # Botão para iniciar processo de trancamento
+        if st.button("❌ TRANCAR MATRÍCULA", type="secondary", use_container_width=True):
+            st.session_state[f'trancar_matricula_{aluno["id"]}'] = True
+        
+        # Interface de trancamento
+        if st.session_state.get(f'trancar_matricula_{aluno["id"]}', False):
+            st.warning("⚠️ **ATENÇÃO**: O trancamento de matrícula cancelará todas as mensalidades futuras!")
+            
+            with st.form(f"form_trancamento_{aluno['id']}"):
+                col_tranc1, col_tranc2 = st.columns(2)
+                
+                with col_tranc1:
+                    data_saida = st.date_input(
+                        "📅 Data de Saída:",
+                        help="Data em que o aluno deixará a escola",
+                        key=f"data_saida_{aluno['id']}"
+                    )
+                    
+                    motivo_saida = st.selectbox(
+                        "📝 Motivo do Trancamento:",
+                        ["trancamento", "transferido", "desistente", "outro"],
+                        key=f"motivo_{aluno['id']}"
+                    )
+                
+                with col_tranc2:
+                    # Mostrar preview das mensalidades que serão canceladas
+                    if data_saida:
+                        data_saida_str = data_saida.isoformat()
+                        
+                        with st.spinner("Calculando mensalidades que serão canceladas..."):
+                            preview_resultado = listar_mensalidades_para_cancelamento(aluno['id'], data_saida_str)
+                        
+                        if preview_resultado.get("success"):
+                            mensalidades_preview = preview_resultado["mensalidades"]
+                            
+                            if mensalidades_preview:
+                                st.info(f"📊 **{len(mensalidades_preview)} mensalidades serão canceladas:**")
+                                for mens in mensalidades_preview[:5]:  # Mostrar apenas as primeiras 5
+                                    st.write(f"   • {mens['mes_referencia']} - R$ {mens['valor']:.2f}")
+                                if len(mensalidades_preview) > 5:
+                                    st.write(f"   • ... e mais {len(mensalidades_preview) - 5}")
+                                
+                                valor_total = sum(m['valor'] for m in mensalidades_preview)
+                                st.info(f"💰 **Valor total cancelado:** R$ {valor_total:,.2f}")
+                            else:
+                                st.success("✅ Nenhuma mensalidade futura para cancelar")
+                        else:
+                            st.error(f"❌ Erro ao calcular mensalidades: {preview_resultado.get('error')}")
+                
+                # Botões de confirmação
+                col_btn1, col_btn2, col_btn3 = st.columns(3)
+                
+                with col_btn1:
+                    if st.form_submit_button("🔒 CONFIRMAR TRANCAMENTO", type="primary"):
+                        if not data_saida:
+                            st.error("❌ Selecione a data de saída!")
+                        else:
+                            with st.spinner("Processando trancamento..."):
+                                resultado_trancamento = trancar_matricula_aluno(
+                                    aluno['id'], 
+                                    data_saida.isoformat(), 
+                                    motivo_saida
+                                )
+                            
+                            if resultado_trancamento.get("success"):
+                                st.success("✅ Matrícula trancada com sucesso!")
+                                st.info(f"📊 {resultado_trancamento['mensalidades_canceladas']} mensalidades canceladas")
+                                
+                                if resultado_trancamento.get('erros_cancelamento'):
+                                    st.warning(f"⚠️ {resultado_trancamento.get('aviso')}")
+                                
+                                # Limpar estado e recarregar
+                                if f'trancar_matricula_{aluno["id"]}' in st.session_state:
+                                    del st.session_state[f'trancar_matricula_{aluno["id"]}']
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Erro no trancamento: {resultado_trancamento.get('error')}")
+                
+                with col_btn2:
+                    if st.form_submit_button("❌ CANCELAR", type="secondary"):
+                        if f'trancar_matricula_{aluno["id"]}' in st.session_state:
+                            del st.session_state[f'trancar_matricula_{aluno["id"]}']
+                        st.rerun()
+                
+                with col_btn3:
+                    st.write("")  # Espaço
     
-    with st.form("form_edicao_aluno"):
-        col1, col2 = st.columns(2)
+    else:
+        # Se está trancado, mostrar informações e opção de reativar (opcional)
+        st.markdown("---")
+        st.markdown("### 🔓 Matrícula Trancada")
+        st.warning("ℹ️ Esta matrícula está trancada. As mensalidades futuras foram canceladas.")
         
-        with col1:
-            novo_turno = st.selectbox(
-                "🕐 Turno:",
-                ["Manhã", "Tarde", "Integral", "Horário Extendido"],
-                index=["Manhã", "Tarde", "Integral", "Horário Extendido"].index(aluno.get('turno', 'Manhã')) if aluno.get('turno') in ["Manhã", "Tarde", "Integral", "Horário Extendido"] else 0
-            )
-            
-            nova_data_nascimento = st.date_input(
-                "📅 Data de Nascimento:",
-                value=pd.to_datetime(aluno.get('data_nascimento')).date() if aluno.get('data_nascimento') else None
-            )
-            
-            nova_data_matricula = st.date_input(
-                "🎯 Data de Matrícula:",
-                value=pd.to_datetime(aluno.get('data_matricula')).date() if aluno.get('data_matricula') else None
-            )
+        # Aqui poderia ser implementada uma função de reativação futuramente
+        st.info("💡 Para reativar a matrícula, entre em contato com a administração.")
+    
+    # Formulário de edição (só aparece se não estiver trancado)
+    if not is_trancado:
+        st.markdown("---")
+        st.markdown("### ✏️ Editar Informações")
         
-        with col2:
-            novo_dia_vencimento = st.selectbox(
-                "📆 Dia de Vencimento:",
-                list(range(1, 32)),
-                index=int(aluno.get('dia_vencimento', 5)) - 1 if aluno.get('dia_vencimento') else 4
-            )
+        with st.form("form_edicao_aluno"):
+            col1, col2 = st.columns(2)
             
-            novo_valor_mensalidade = st.number_input(
-                "💵 Valor da Mensalidade (R$):",
-                min_value=0.0,
-                step=10.0,
-                value=float(aluno.get('valor_mensalidade', 0))
-            )
+            with col1:
+                novo_turno = st.selectbox(
+                    "🕐 Turno:",
+                    ["Manhã", "Tarde", "Integral", "Horário Extendido"],
+                    index=["Manhã", "Tarde", "Integral", "Horário Extendido"].index(aluno.get('turno', 'Manhã')) if aluno.get('turno') in ["Manhã", "Tarde", "Integral", "Horário Extendido"] else 0
+                )
+                
+                nova_data_nascimento = st.date_input(
+                    "📅 Data de Nascimento:",
+                    value=pd.to_datetime(aluno.get('data_nascimento')).date() if aluno.get('data_nascimento') else None
+                )
+                
+                nova_data_matricula = st.date_input(
+                    "🎯 Data de Matrícula:",
+                    value=pd.to_datetime(aluno.get('data_matricula')).date() if aluno.get('data_matricula') else None
+                )
             
-            mensalidades_geradas = st.checkbox(
-                "📊 Mensalidades Geradas",
-                value=aluno.get('mensalidades_geradas', False)
-            )
-        
-        if st.form_submit_button("💾 Salvar Alterações", type="primary"):
-            campos_update = {
-                "turno": novo_turno,
-                "data_nascimento": nova_data_nascimento.isoformat() if nova_data_nascimento else None,
-                "data_matricula": nova_data_matricula.isoformat() if nova_data_matricula else None,
-                "dia_vencimento": str(novo_dia_vencimento),
-                "valor_mensalidade": novo_valor_mensalidade,
-                "mensalidades_geradas": mensalidades_geradas
-            }
+            with col2:
+                novo_dia_vencimento = st.selectbox(
+                    "📆 Dia de Vencimento:",
+                    list(range(1, 32)),
+                    index=int(aluno.get('dia_vencimento', 5)) - 1 if aluno.get('dia_vencimento') else 4
+                )
+                
+                novo_valor_mensalidade = st.number_input(
+                    "💵 Valor da Mensalidade (R$):",
+                    min_value=0.0,
+                    step=10.0,
+                    value=float(aluno.get('valor_mensalidade', 0))
+                )
+                
+                mensalidades_geradas = st.checkbox(
+                    "📊 Mensalidades Geradas",
+                    value=aluno.get('mensalidades_geradas', False)
+                )
             
-            resultado = atualizar_aluno_campos(aluno["id"], campos_update)
-            
-            if resultado.get("success"):
-                st.success("✅ Dados do aluno atualizados com sucesso!")
-                st.rerun()
-            else:
-                st.error(f"❌ Erro ao atualizar: {resultado.get('error')}")
+            if st.form_submit_button("💾 Salvar Alterações", type="primary"):
+                campos_update = {
+                    "turno": novo_turno,
+                    "data_nascimento": nova_data_nascimento.isoformat() if nova_data_nascimento else None,
+                    "data_matricula": nova_data_matricula.isoformat() if nova_data_matricula else None,
+                    "dia_vencimento": str(novo_dia_vencimento),
+                    "valor_mensalidade": novo_valor_mensalidade,
+                    "mensalidades_geradas": mensalidades_geradas
+                }
+                
+                resultado = atualizar_aluno_campos(aluno["id"], campos_update)
+                
+                if resultado.get("success"):
+                    st.success("✅ Dados do aluno atualizados com sucesso!")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Erro ao atualizar: {resultado.get('error')}")
+    else:
+        st.info("ℹ️ Edição de dados não disponível para matrículas trancadas.")
 
 def mostrar_gestao_responsaveis_completa(id_aluno: str, responsaveis: List[Dict]):
     """Gestão completa de responsáveis: visualizar, editar, cadastrar e vincular"""
@@ -1925,7 +2099,7 @@ def mostrar_mensalidades_aluno(mensalidades: List[Dict], estatisticas: Dict, id_
             status_counts[status] += 1
         
         # Mostrar métricas de status
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
             pagas = status_counts.get("Pago", 0) + status_counts.get("Pago parcial", 0)
@@ -1943,7 +2117,15 @@ def mostrar_mensalidades_aluno(mensalidades: List[Dict], estatisticas: Dict, id_
                 st.metric("⚠️ Vencidas", 0)
         
         with col4:
-            valor_total_mensalidades = sum(m["valor"] for m in mensalidades)
+            canceladas = status_counts.get("Cancelado", 0)
+            if canceladas > 0:
+                st.metric("❌ Canceladas", canceladas, delta="Trancamento", delta_color="off")
+            else:
+                st.metric("❌ Canceladas", 0)
+        
+        with col5:
+            # Calcular valor total apenas das mensalidades não canceladas
+            valor_total_mensalidades = sum(m["valor"] for m in mensalidades if m["status_real"] != "Cancelado")
             st.metric("💰 Valor Total", f"R$ {valor_total_mensalidades:,.2f}")
         
         # Lista detalhada de mensalidades
@@ -1956,7 +2138,8 @@ def mostrar_mensalidades_aluno(mensalidades: List[Dict], estatisticas: Dict, id_
                 "Pago": "✅",
                 "Pago parcial": "🔶", 
                 "A vencer": "📅",
-                "Vencida": "⚠️"
+                "Vencida": "⚠️",
+                "Cancelado": "❌"
             }.get(mens["status_real"], "❓")
             
             df_mensalidades.append({
@@ -2428,6 +2611,1177 @@ def mostrar_extrato_pix_aluno(id_aluno: str, responsaveis: List[Dict]):
                 st.write(f"   - CPF: {resp.get('cpf', 'N/A')}")
                 st.write(f"   - Telefone: {resp.get('telefone', 'N/A')}")
                 st.write("---")
+
+# ==========================================================
+# 💰 FUNÇÕES DE INTERFACE PARA COBRANÇAS
+# ==========================================================
+
+def mostrar_interface_criar_cobrancas():
+    """Interface para criar novas cobranças"""
+    st.markdown("### ➕ Criar Novas Cobranças")
+    
+    # Tipos de cobrança
+    tipo_cobranca_tabs = st.tabs(["📦 Cobrança Parcelada", "📝 Cobrança Individual"])
+    
+    # TAB: Cobrança Parcelada (ex: Formatura)
+    with tipo_cobranca_tabs[0]:
+        st.markdown("#### 📦 Cadastrar Cobrança Parcelada")
+        st.info("💡 Use para cobranças como formatura, eventos com múltiplas parcelas, etc.")
+        
+        with st.form("form_cobranca_parcelada"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                titulo_base = st.text_input("📝 Título da Cobrança*", 
+                                          placeholder="Ex: Formatura 2025")
+                descricao = st.text_area("📋 Descrição", 
+                                       placeholder="Ex: Formatura da turma Infantil III")
+                valor_parcela = st.number_input("💰 Valor por Parcela (R$)*", 
+                                              min_value=0.01, step=0.01, value=376.00)
+                numero_parcelas = st.number_input("🔢 Número de Parcelas*", 
+                                                min_value=2, max_value=24, value=6)
+            
+            with col2:
+                data_primeira = st.date_input("📅 Data da Primeira Parcela*", 
+                                            value=date(2025, 6, 30))
+                
+                tipo_opcoes = list(TIPOS_COBRANCA_DISPLAY.keys())
+                tipo_selecionado = st.selectbox("🎯 Tipo de Cobrança*", 
+                                              tipo_opcoes,
+                                              format_func=lambda x: TIPOS_COBRANCA_DISPLAY[x])
+                
+                prioridade = st.selectbox("⚡ Prioridade", 
+                                        list(PRIORIDADES_COBRANCA.keys()),
+                                        index=1,  # Normal como padrão
+                                        format_func=lambda x: PRIORIDADES_COBRANCA[x])
+                
+                observacoes = st.text_area("📝 Observações", 
+                                         placeholder="Observações adicionais...")
+            
+            # Preview das parcelas
+            if titulo_base and valor_parcela > 0 and numero_parcelas > 0:
+                st.markdown("#### 👁️ Preview das Parcelas")
+                
+                from datetime import datetime, timedelta
+                data_base = data_primeira
+                valor_total = valor_parcela * numero_parcelas
+                
+                st.info(f"📊 **Total:** {numero_parcelas} parcelas de {valor_parcela:,.2f} = R$ {valor_total:,.2f}")
+                
+                # Mostrar algumas parcelas como exemplo
+                for i in range(min(3, numero_parcelas)):
+                    data_parcela = data_base + timedelta(days=30 * i)
+                    st.write(f"• **Parcela {i+1}:** {titulo_base} - Parcela {i+1}/{numero_parcelas} - R$ {valor_parcela:,.2f} - {data_parcela.strftime('%d/%m/%Y')}")
+                
+                if numero_parcelas > 3:
+                    st.write(f"... e mais {numero_parcelas - 3} parcelas")
+            
+            # Botão de criação
+            col_btn1, col_btn2 = st.columns(2)
+            
+            with col_btn1:
+                criar_cobranca = st.form_submit_button("🎯 Criar Cobrança Parcelada", type="primary")
+            
+            with col_btn2:
+                if st.form_submit_button("👥 Criar e Vincular a Alunos"):
+                    st.session_state['criar_e_vincular_parcelada'] = True
+                    criar_cobranca = True
+            
+            if criar_cobranca:
+                if not titulo_base or valor_parcela <= 0 or numero_parcelas <= 0:
+                    st.error("❌ Preencha todos os campos obrigatórios!")
+                else:
+                    # Salvar dados na sessão para usar na vinculação
+                    dados_cobranca = {
+                        "titulo": titulo_base,
+                        "descricao": descricao,
+                        "valor_parcela": valor_parcela,
+                        "numero_parcelas": numero_parcelas,
+                        "data_primeira_parcela": data_primeira.isoformat(),
+                        "tipo_cobranca": tipo_selecionado,
+                        "prioridade": prioridade,
+                        "observacoes": observacoes
+                    }
+                    
+                    st.session_state['ultima_cobranca_parcelada'] = dados_cobranca
+                    st.success("✅ Cobrança parcelada configurada!")
+                    
+                    if st.session_state.get('criar_e_vincular_parcelada'):
+                        st.info("👥 Vá para a aba 'Vincular Alunos' para adicionar alunos a esta cobrança")
+                        del st.session_state['criar_e_vincular_parcelada']
+    
+    # TAB: Cobrança Individual
+    with tipo_cobranca_tabs[1]:
+        st.markdown("#### 📝 Cadastrar Cobrança Individual")
+        st.info("💡 Use para cobranças únicas como taxas, materiais, etc.")
+        
+        with st.form("form_cobranca_individual"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                titulo_individual = st.text_input("📝 Título da Cobrança*", 
+                                                placeholder="Ex: Taxa de Material")
+                descricao_individual = st.text_area("📋 Descrição", 
+                                                  placeholder="Ex: Kit de material escolar")
+                valor_individual = st.number_input("💰 Valor (R$)*", 
+                                                 min_value=0.01, step=0.01, value=120.00)
+            
+            with col2:
+                data_vencimento = st.date_input("📅 Data de Vencimento*")
+                
+                tipo_individual = st.selectbox("🎯 Tipo de Cobrança*", 
+                                             tipo_opcoes,
+                                             format_func=lambda x: TIPOS_COBRANCA_DISPLAY[x],
+                                             key="tipo_individual")
+                
+                prioridade_individual = st.selectbox("⚡ Prioridade", 
+                                                   list(PRIORIDADES_COBRANCA.keys()),
+                                                   index=1,
+                                                   format_func=lambda x: PRIORIDADES_COBRANCA[x],
+                                                   key="prioridade_individual")
+                
+                observacoes_individual = st.text_area("📝 Observações", 
+                                                    placeholder="Observações adicionais...",
+                                                    key="obs_individual")
+            
+            # Botões de criação
+            col_btn1, col_btn2 = st.columns(2)
+            
+            with col_btn1:
+                criar_individual = st.form_submit_button("📝 Criar Cobrança Individual", type="primary")
+            
+            with col_btn2:
+                if st.form_submit_button("👥 Criar e Vincular a Alunos"):
+                    st.session_state['criar_e_vincular_individual'] = True
+                    criar_individual = True
+            
+            if criar_individual:
+                if not titulo_individual or valor_individual <= 0:
+                    st.error("❌ Preencha todos os campos obrigatórios!")
+                else:
+                    # Salvar dados na sessão
+                    dados_individual = {
+                        "titulo": titulo_individual,
+                        "descricao": descricao_individual,
+                        "valor": valor_individual,
+                        "data_vencimento": data_vencimento.isoformat(),
+                        "tipo_cobranca": tipo_individual,
+                        "prioridade": prioridade_individual,
+                        "observacoes": observacoes_individual
+                    }
+                    
+                    st.session_state['ultima_cobranca_individual'] = dados_individual
+                    st.success("✅ Cobrança individual configurada!")
+                    
+                    if st.session_state.get('criar_e_vincular_individual'):
+                        st.info("👥 Vá para a aba 'Vincular Alunos' para adicionar alunos a esta cobrança")
+                        del st.session_state['criar_e_vincular_individual']
+
+def mostrar_cobrancas_aluno(id_aluno: str, responsaveis: List[Dict]):
+    """Mostra interface completa de cobranças do aluno"""
+    st.markdown("### 💰 Cobranças do Aluno")
+    
+    # Buscar cobranças do aluno
+    with st.spinner("Carregando cobranças..."):
+        resultado_cobrancas = listar_cobrancas_aluno(id_aluno)
+    
+    if not resultado_cobrancas.get("success"):
+        st.error(f"❌ Erro ao carregar cobranças: {resultado_cobrancas.get('error')}")
+        return
+    
+    cobrancas = resultado_cobrancas.get("cobrancas", [])
+    estatisticas = resultado_cobrancas.get("estatisticas", {})
+    
+    # Métricas principais
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("⏳ Pendentes", estatisticas.get("total_pendente", 0), 
+                 delta=f"R$ {estatisticas.get('valor_pendente', 0):,.2f}")
+    
+    with col2:
+        st.metric("⚠️ Vencidas", estatisticas.get("total_vencido", 0),
+                 delta=f"R$ {estatisticas.get('valor_vencido', 0):,.2f}")
+    
+    with col3:
+        st.metric("✅ Pagas", estatisticas.get("total_pago", 0),
+                 delta=f"R$ {estatisticas.get('valor_pago', 0):,.2f}")
+    
+    with col4:
+        valor_total = (estatisticas.get('valor_pendente', 0) + 
+                      estatisticas.get('valor_vencido', 0) + 
+                      estatisticas.get('valor_pago', 0))
+        st.metric("💰 Total", f"R$ {valor_total:,.2f}")
+    
+    if cobrancas:
+        st.markdown("#### 📋 Lista de Cobranças")
+        
+        # Agrupar por grupo_cobranca para mostrar parcelas relacionadas
+        grupos = {}
+        individuais = []
+        
+        for cobranca in cobrancas:
+            if cobranca.get("grupo_cobranca"):
+                grupo = cobranca["grupo_cobranca"]
+                if grupo not in grupos:
+                    grupos[grupo] = []
+                grupos[grupo].append(cobranca)
+            else:
+                individuais.append(cobranca)
+        
+        # Mostrar grupos de parcelas
+        for grupo, parcelas in grupos.items():
+            primeiro = parcelas[0]
+            total_grupo = sum(p["valor"] for p in parcelas)
+            pagas_grupo = len([p for p in parcelas if p["status_real"] == "Pago"])
+            
+            with st.expander(f"📦 {primeiro['titulo'].split(' - Parcela')[0]} - {len(parcelas)} parcelas - R$ {total_grupo:,.2f} ({pagas_grupo} pagas)", expanded=False):
+                for parcela in sorted(parcelas, key=lambda x: x["parcela_numero"]):
+                    col1, col2, col3 = st.columns([3, 2, 1])
+                    
+                    with col1:
+                        st.write(f"**{parcela['emoji']} {parcela['titulo_completo']}**")
+                        st.write(f"📅 Vencimento: {parcela['data_vencimento_br']}")
+                    
+                    with col2:
+                        st.write(f"💰 {parcela['valor_br']}")
+                        st.write(f"🔢 {parcela['status_real']}")
+                    
+                    with col3:
+                        if parcela['status_real'] == 'Pendente':
+                            if st.button("✅ Pagar", key=f"pagar_{parcela['id_cobranca']}"):
+                                data_hoje = date.today().isoformat()
+                                resultado = marcar_cobranca_como_paga(parcela['id_cobranca'], data_hoje)
+                                if resultado.get("success"):
+                                    st.success("✅ Cobrança marcada como paga!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Erro: {resultado.get('error')}")
+        
+        # Mostrar cobranças individuais
+        if individuais:
+            st.markdown("#### 📝 Cobranças Individuais")
+            for cobranca in individuais:
+                with st.expander(f"{cobranca['emoji']} {cobranca['titulo']} - {cobranca['valor_br']}", expanded=False):
+                    col1, col2, col3 = st.columns([3, 2, 1])
+                    
+                    with col1:
+                        st.write(f"**📋 Tipo:** {cobranca['tipo_display']}")
+                        st.write(f"**📅 Vencimento:** {cobranca['data_vencimento_br']}")
+                        if cobranca.get('descricao'):
+                            st.write(f"**📝 Descrição:** {cobranca['descricao']}")
+                    
+                    with col2:
+                        st.write(f"**💰 Valor:** {cobranca['valor_br']}")
+                        st.write(f"**🔢 Status:** {cobranca['status_real']}")
+                        st.write(f"**⚡ Prioridade:** {cobranca['prioridade_display']}")
+                    
+                    with col3:
+                        if cobranca['status_real'] == 'Pendente':
+                            if st.button("✅ Pagar", key=f"pagar_individual_{cobranca['id_cobranca']}"):
+                                data_hoje = date.today().isoformat()
+                                resultado = marcar_cobranca_como_paga(cobranca['id_cobranca'], data_hoje)
+                                if resultado.get("success"):
+                                    st.success("✅ Cobrança marcada como paga!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Erro: {resultado.get('error')}")
+                        elif cobranca['status_real'] == 'Pago':
+                            st.success(f"Pago em: {cobranca['data_pagamento_br']}")
+    else:
+        st.info("ℹ️ Nenhuma cobrança cadastrada para este aluno")
+        st.info("💡 Use a aba 'Gestão de Cobranças' para criar e vincular cobranças")
+
+def mostrar_interface_vincular_alunos_cobrancas():
+    """Interface para vincular alunos às cobranças criadas"""
+    st.markdown("### 👨‍🎓 Vincular Alunos às Cobranças")
+    
+    # Verificar se há cobranças configuradas na sessão
+    cobranca_parcelada = st.session_state.get('ultima_cobranca_parcelada')
+    cobranca_individual = st.session_state.get('ultima_cobranca_individual')
+    
+    if not cobranca_parcelada and not cobranca_individual:
+        st.warning("⚠️ Nenhuma cobrança configurada na sessão")
+        st.info("💡 Vá para a aba 'Criar Cobranças' primeiro para configurar uma cobrança")
+        return
+    
+    # Tabs para tipos de cobrança
+    vincular_tabs = []
+    tab_labels = []
+    
+    if cobranca_parcelada:
+        tab_labels.append("📦 Cobrança Parcelada")
+    if cobranca_individual:
+        tab_labels.append("📝 Cobrança Individual")
+    
+    if len(tab_labels) > 1:
+        vincular_tabs = st.tabs(tab_labels)
+    else:
+        vincular_tabs = [st.container()]
+    
+    tab_index = 0
+    
+    # TAB: Vincular Cobrança Parcelada
+    if cobranca_parcelada:
+        with vincular_tabs[tab_index]:
+            st.markdown("#### 📦 Vincular Cobrança Parcelada")
+            
+            # Mostrar resumo da cobrança
+            col_info1, col_info2 = st.columns(2)
+            
+            with col_info1:
+                st.info(f"**📝 Título:** {cobranca_parcelada['titulo']}")
+                st.info(f"**💰 Valor por Parcela:** R$ {cobranca_parcelada['valor_parcela']:,.2f}")
+                st.info(f"**🔢 Número de Parcelas:** {cobranca_parcelada['numero_parcelas']}")
+            
+            with col_info2:
+                valor_total = cobranca_parcelada['valor_parcela'] * cobranca_parcelada['numero_parcelas']
+                st.info(f"**💰 Valor Total:** R$ {valor_total:,.2f}")
+                st.info(f"**📅 Primeira Parcela:** {formatar_data_br(cobranca_parcelada['data_primeira_parcela'])}")
+                st.info(f"**🎯 Tipo:** {TIPOS_COBRANCA_DISPLAY.get(cobranca_parcelada['tipo_cobranca'], 'N/A')}")
+            
+            # Interface para selecionar alunos
+            st.markdown("#### 🔍 Selecionar Alunos")
+            
+            # Busca por turmas
+            turmas_resultado = listar_turmas_disponiveis()
+            if turmas_resultado.get("success"):
+                turmas_selecionadas = st.multiselect(
+                    "🎓 Filtrar por Turmas (opcional):",
+                    options=turmas_resultado["turmas"],
+                    help="Deixe vazio para buscar em todas as turmas"
+                )
+                
+                # Buscar alunos das turmas
+                if turmas_selecionadas:
+                    mapeamento = obter_mapeamento_turmas()
+                    if mapeamento.get("success"):
+                        ids_turmas = [mapeamento["mapeamento"][nome] for nome in turmas_selecionadas]
+                        
+                        resultado_alunos = buscar_alunos_por_turmas(ids_turmas)
+                        if resultado_alunos.get("success"):
+                            # Mostrar alunos agrupados por turma
+                            st.markdown("#### 👨‍🎓 Alunos Disponíveis")
+                            
+                            alunos_selecionados = []
+                            
+                            for turma_nome, dados_turma in resultado_alunos["alunos_por_turma"].items():
+                                with st.expander(f"🎓 {turma_nome} ({len(dados_turma['alunos'])} alunos)", expanded=True):
+                                    
+                                    # Checkbox para selecionar todos da turma
+                                    selecionar_todos = st.checkbox(f"Selecionar todos de {turma_nome}", key=f"todos_{turma_nome}_parcelada")
+                                    
+                                    cols = st.columns(3)
+                                    for i, aluno in enumerate(dados_turma["alunos"]):
+                                        col_idx = i % 3
+                                        with cols[col_idx]:
+                                            selecionado = st.checkbox(
+                                                f"👨‍🎓 {aluno['nome']}",
+                                                value=selecionar_todos,
+                                                key=f"aluno_{aluno['id']}_parcelada"
+                                            )
+                                            if selecionado:
+                                                alunos_selecionados.append({
+                                                    "id": aluno["id"],
+                                                    "nome": aluno["nome"],
+                                                    "turma": turma_nome
+                                                })
+                            
+                            # Mostrar resumo dos selecionados
+                            if alunos_selecionados:
+                                st.markdown("#### 📋 Resumo dos Alunos Selecionados")
+                                
+                                col_resumo1, col_resumo2 = st.columns(2)
+                                
+                                with col_resumo1:
+                                    st.metric("👨‍🎓 Total de Alunos", len(alunos_selecionados))
+                                    valor_total_geral = valor_total * len(alunos_selecionados)
+                                    st.metric("💰 Valor Total Geral", f"R$ {valor_total_geral:,.2f}")
+                                
+                                with col_resumo2:
+                                    # Agrupar por turma para resumo
+                                    turmas_resumo = {}
+                                    for aluno in alunos_selecionados:
+                                        turma = aluno["turma"]
+                                        if turma not in turmas_resumo:
+                                            turmas_resumo[turma] = 0
+                                        turmas_resumo[turma] += 1
+                                    
+                                    st.write("**📊 Por Turma:**")
+                                    for turma, quantidade in turmas_resumo.items():
+                                        st.write(f"• {turma}: {quantidade} alunos")
+                                
+                                # Botão para criar as cobranças
+                                if st.button("🎯 Criar Cobranças para Alunos Selecionados", type="primary", key="criar_parcelada"):
+                                    with st.spinner(f"Criando cobranças para {len(alunos_selecionados)} alunos..."):
+                                        sucessos = 0
+                                        erros = []
+                                        
+                                        for aluno in alunos_selecionados:
+                                            try:
+                                                # Buscar responsável financeiro do aluno
+                                                responsaveis_aluno = listar_responsaveis_aluno(aluno["id"])
+                                                
+                                                id_responsavel = None
+                                                if responsaveis_aluno.get("success") and responsaveis_aluno.get("responsaveis"):
+                                                    # Procurar responsável financeiro
+                                                    for resp in responsaveis_aluno["responsaveis"]:
+                                                        if resp.get("responsavel_financeiro"):
+                                                            id_responsavel = resp["id"]
+                                                            break
+                                                    
+                                                    # Se não tem financeiro, usar o primeiro
+                                                    if not id_responsavel:
+                                                        id_responsavel = responsaveis_aluno["responsaveis"][0]["id"]
+                                                
+                                                if id_responsavel:
+                                                    resultado = cadastrar_cobranca_parcelada(
+                                                        aluno["id"], 
+                                                        id_responsavel, 
+                                                        cobranca_parcelada
+                                                    )
+                                                    
+                                                    if resultado.get("success"):
+                                                        sucessos += 1
+                                                    else:
+                                                        erros.append(f"{aluno['nome']}: {resultado.get('error')}")
+                                                else:
+                                                    erros.append(f"{aluno['nome']}: Nenhum responsável encontrado")
+                                            
+                                            except Exception as e:
+                                                erros.append(f"{aluno['nome']}: {str(e)}")
+                                        
+                                        # Mostrar resultados
+                                        if sucessos > 0:
+                                            st.success(f"✅ Cobranças criadas para {sucessos} alunos!")
+                                        
+                                        if erros:
+                                            st.error(f"❌ {len(erros)} erros encontrados:")
+                                            for erro in erros[:5]:  # Mostrar apenas os primeiros 5 erros
+                                                st.write(f"   - {erro}")
+                                            if len(erros) > 5:
+                                                st.write(f"   ... e mais {len(erros) - 5} erros")
+                                        
+                                        # Limpar sessão após criação
+                                        if sucessos > 0:
+                                            del st.session_state['ultima_cobranca_parcelada']
+                                            st.rerun()
+                else:
+                    st.info("ℹ️ Selecione pelo menos uma turma para visualizar os alunos")
+            
+        tab_index += 1
+    
+    # TAB: Vincular Cobrança Individual
+    if cobranca_individual:
+        with vincular_tabs[tab_index]:
+            st.markdown("#### 📝 Vincular Cobrança Individual")
+            
+            # Mostrar resumo da cobrança
+            col_info1, col_info2 = st.columns(2)
+            
+            with col_info1:
+                st.info(f"**📝 Título:** {cobranca_individual['titulo']}")
+                st.info(f"**💰 Valor:** R$ {cobranca_individual['valor']:,.2f}")
+                st.info(f"**📅 Vencimento:** {formatar_data_br(cobranca_individual['data_vencimento'])}")
+            
+            with col_info2:
+                st.info(f"**🎯 Tipo:** {TIPOS_COBRANCA_DISPLAY.get(cobranca_individual['tipo_cobranca'], 'N/A')}")
+                st.info(f"**⚡ Prioridade:** {PRIORIDADES_COBRANCA.get(cobranca_individual['prioridade'], 'N/A')}")
+                if cobranca_individual.get('descricao'):
+                    st.info(f"**📋 Descrição:** {cobranca_individual['descricao']}")
+            
+            # Interface para selecionar alunos (similar à parcelada)
+            st.markdown("#### 🔍 Selecionar Alunos")
+            
+            turmas_resultado = listar_turmas_disponiveis()
+            if turmas_resultado.get("success"):
+                turmas_selecionadas_individual = st.multiselect(
+                    "🎓 Filtrar por Turmas (opcional):",
+                    options=turmas_resultado["turmas"],
+                    help="Deixe vazio para buscar em todas as turmas",
+                    key="turmas_individual"
+                )
+                
+                if turmas_selecionadas_individual:
+                    mapeamento = obter_mapeamento_turmas()
+                    if mapeamento.get("success"):
+                        ids_turmas = [mapeamento["mapeamento"][nome] for nome in turmas_selecionadas_individual]
+                        
+                        resultado_alunos = buscar_alunos_por_turmas(ids_turmas)
+                        if resultado_alunos.get("success"):
+                            st.markdown("#### 👨‍🎓 Alunos Disponíveis")
+                            
+                            alunos_selecionados_individual = []
+                            
+                            for turma_nome, dados_turma in resultado_alunos["alunos_por_turma"].items():
+                                with st.expander(f"🎓 {turma_nome} ({len(dados_turma['alunos'])} alunos)", expanded=True):
+                                    
+                                    selecionar_todos = st.checkbox(f"Selecionar todos de {turma_nome}", key=f"todos_{turma_nome}_individual")
+                                    
+                                    cols = st.columns(3)
+                                    for i, aluno in enumerate(dados_turma["alunos"]):
+                                        col_idx = i % 3
+                                        with cols[col_idx]:
+                                            selecionado = st.checkbox(
+                                                f"👨‍🎓 {aluno['nome']}",
+                                                value=selecionar_todos,
+                                                key=f"aluno_{aluno['id']}_individual"
+                                            )
+                                            if selecionado:
+                                                alunos_selecionados_individual.append({
+                                                    "id": aluno["id"],
+                                                    "nome": aluno["nome"],
+                                                    "turma": turma_nome
+                                                })
+                            
+                            # Resumo e criação
+                            if alunos_selecionados_individual:
+                                st.markdown("#### 📋 Resumo dos Alunos Selecionados")
+                                
+                                col_resumo1, col_resumo2 = st.columns(2)
+                                
+                                with col_resumo1:
+                                    st.metric("👨‍🎓 Total de Alunos", len(alunos_selecionados_individual))
+                                    valor_total_individual = cobranca_individual['valor'] * len(alunos_selecionados_individual)
+                                    st.metric("💰 Valor Total", f"R$ {valor_total_individual:,.2f}")
+                                
+                                with col_resumo2:
+                                    turmas_resumo = {}
+                                    for aluno in alunos_selecionados_individual:
+                                        turma = aluno["turma"]
+                                        if turma not in turmas_resumo:
+                                            turmas_resumo[turma] = 0
+                                        turmas_resumo[turma] += 1
+                                    
+                                    st.write("**📊 Por Turma:**")
+                                    for turma, quantidade in turmas_resumo.items():
+                                        st.write(f"• {turma}: {quantidade} alunos")
+                                
+                                # Botão para criar
+                                if st.button("📝 Criar Cobranças para Alunos Selecionados", type="primary", key="criar_individual"):
+                                    with st.spinner(f"Criando cobranças para {len(alunos_selecionados_individual)} alunos..."):
+                                        sucessos = 0
+                                        erros = []
+                                        
+                                        for aluno in alunos_selecionados_individual:
+                                            try:
+                                                responsaveis_aluno = listar_responsaveis_aluno(aluno["id"])
+                                                
+                                                id_responsavel = None
+                                                if responsaveis_aluno.get("success") and responsaveis_aluno.get("responsaveis"):
+                                                    for resp in responsaveis_aluno["responsaveis"]:
+                                                        if resp.get("responsavel_financeiro"):
+                                                            id_responsavel = resp["id"]
+                                                            break
+                                                    
+                                                    if not id_responsavel:
+                                                        id_responsavel = responsaveis_aluno["responsaveis"][0]["id"]
+                                                
+                                                if id_responsavel:
+                                                    resultado = cadastrar_cobranca_individual(
+                                                        aluno["id"], 
+                                                        id_responsavel, 
+                                                        cobranca_individual
+                                                    )
+                                                    
+                                                    if resultado.get("success"):
+                                                        sucessos += 1
+                                                    else:
+                                                        erros.append(f"{aluno['nome']}: {resultado.get('error')}")
+                                                else:
+                                                    erros.append(f"{aluno['nome']}: Nenhum responsável encontrado")
+                                            
+                                            except Exception as e:
+                                                erros.append(f"{aluno['nome']}: {str(e)}")
+                                        
+                                        # Mostrar resultados
+                                        if sucessos > 0:
+                                            st.success(f"✅ Cobranças criadas para {sucessos} alunos!")
+                                        
+                                        if erros:
+                                            st.error(f"❌ {len(erros)} erros encontrados:")
+                                            for erro in erros[:5]:
+                                                st.write(f"   - {erro}")
+                                            if len(erros) > 5:
+                                                st.write(f"   ... e mais {len(erros) - 5} erros")
+                                        
+                                        # Limpar sessão
+                                        if sucessos > 0:
+                                            del st.session_state['ultima_cobranca_individual']
+                                            st.rerun()
+                else:
+                    st.info("ℹ️ Selecione pelo menos uma turma para visualizar os alunos")
+
+def mostrar_interface_gerenciar_cobrancas():
+    """Interface para gerenciar cobranças existentes"""
+    st.markdown("### 📋 Gerenciar Cobranças Existentes")
+    
+    # Buscar todas as cobranças criadas
+    with st.spinner("Carregando cobranças do sistema..."):
+        try:
+            # Buscar todas as cobranças do banco de dados
+            response = supabase.table("cobrancas").select("""
+                id_cobranca, titulo, valor, data_vencimento, status, tipo_cobranca,
+                grupo_cobranca, parcela_numero, parcela_total, prioridade,
+                alunos!inner(id, nome, turmas!inner(nome_turma)),
+                responsaveis!inner(id, nome)
+            """).order("data_vencimento").execute()
+            
+            if not response.data:
+                st.info("ℹ️ Nenhuma cobrança encontrada no sistema")
+                st.info("💡 Use a aba 'Criar Cobranças' para criar novas cobranças")
+                return
+            
+            cobranças_sistema = response.data
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar cobranças: {str(e)}")
+            return
+    
+    # Filtros
+    st.markdown("#### 🔍 Filtros")
+    col_filtro1, col_filtro2, col_filtro3 = st.columns(3)
+    
+    with col_filtro1:
+        # Filtro por tipo
+        tipos_unicos = list(set(c["tipo_cobranca"] for c in cobranças_sistema))
+        tipo_filtro = st.multiselect(
+            "🎯 Tipo de Cobrança:",
+            options=tipos_unicos,
+            format_func=lambda x: TIPOS_COBRANCA_DISPLAY.get(x, x)
+        )
+    
+    with col_filtro2:
+        # Filtro por status
+        status_unicos = list(set(c["status"] for c in cobranças_sistema))
+        status_filtro = st.multiselect(
+            "📊 Status:",
+            options=status_unicos
+        )
+    
+    with col_filtro3:
+        # Filtro por turma
+        turmas_unicas = list(set(c["alunos"]["turmas"]["nome_turma"] for c in cobranças_sistema))
+        turma_filtro = st.multiselect(
+            "🎓 Turma:",
+            options=turmas_unicas
+        )
+    
+    # Aplicar filtros
+    cobranças_filtradas = cobranças_sistema
+    
+    if tipo_filtro:
+        cobranças_filtradas = [c for c in cobranças_filtradas if c["tipo_cobranca"] in tipo_filtro]
+    
+    if status_filtro:
+        cobranças_filtradas = [c for c in cobranças_filtradas if c["status"] in status_filtro]
+    
+    if turma_filtro:
+        cobranças_filtradas = [c for c in cobranças_filtradas if c["alunos"]["turmas"]["nome_turma"] in turma_filtro]
+    
+    # Estatísticas das cobranças
+    if cobranças_filtradas:
+        st.markdown("#### 📊 Estatísticas")
+        
+        total_cobrancas = len(cobranças_filtradas)
+        valor_total = sum(float(c["valor"]) for c in cobranças_filtradas)
+        pendentes = len([c for c in cobranças_filtradas if c["status"] == "Pendente"])
+        pagas = len([c for c in cobranças_filtradas if c["status"] == "Pago"])
+        
+        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+        
+        with col_stat1:
+            st.metric("📋 Total de Cobranças", total_cobrancas)
+        
+        with col_stat2:
+            st.metric("💰 Valor Total", f"R$ {valor_total:,.2f}")
+        
+        with col_stat3:
+            st.metric("⏳ Pendentes", pendentes)
+        
+        with col_stat4:
+            st.metric("✅ Pagas", pagas)
+        
+        # Agrupar por grupo_cobranca (parcelas relacionadas)
+        grupos = {}
+        individuais = []
+        
+        for cobranca in cobranças_filtradas:
+            if cobranca.get("grupo_cobranca"):
+                grupo = cobranca["grupo_cobranca"]
+                if grupo not in grupos:
+                    grupos[grupo] = []
+                grupos[grupo].append(cobranca)
+            else:
+                individuais.append(cobranca)
+        
+        # Mostrar grupos de parcelas
+        if grupos:
+            st.markdown("#### 📦 Cobranças Parceladas")
+            
+            for grupo, parcelas in grupos.items():
+                primeiro = parcelas[0]
+                total_grupo = sum(float(p["valor"]) for p in parcelas)
+                pagas_grupo = len([p for p in parcelas if p["status"] == "Pago"])
+                pendentes_grupo = len([p for p in parcelas if p["status"] == "Pendente"])
+                
+                # Título do grupo baseado na primeira parcela
+                titulo_grupo = primeiro['titulo'].split(' - Parcela')[0] if ' - Parcela' in primeiro['titulo'] else primeiro['titulo']
+                tipo_display = TIPOS_COBRANCA_DISPLAY.get(primeiro['tipo_cobranca'], primeiro['tipo_cobranca'])
+                
+                with st.expander(f"📦 {tipo_display} - {titulo_grupo} ({len(parcelas)} parcelas) - R$ {total_grupo:,.2f} ({pagas_grupo}/{len(parcelas)} pagas)", expanded=False):
+                    
+                    # Resumo do grupo
+                    col_grupo1, col_grupo2 = st.columns(2)
+                    
+                    with col_grupo1:
+                        st.info(f"**👨‍🎓 Aluno:** {primeiro['alunos']['nome']}")
+                        st.info(f"**🎓 Turma:** {primeiro['alunos']['turmas']['nome_turma']}")
+                        st.info(f"**👤 Responsável:** {primeiro['responsaveis']['nome']}")
+                    
+                    with col_grupo2:
+                        st.info(f"**📦 Total de Parcelas:** {len(parcelas)}")
+                        st.info(f"**💰 Valor Total:** R$ {total_grupo:,.2f}")
+                        st.info(f"**📊 Status:** {pagas_grupo} pagas, {pendentes_grupo} pendentes")
+                    
+                    # Lista das parcelas
+                    parcelas_ordenadas = sorted(parcelas, key=lambda x: x["parcela_numero"])
+                    
+                    for parcela in parcelas_ordenadas:
+                        col_parcela1, col_parcela2, col_parcela3, col_parcela4 = st.columns([3, 2, 2, 1])
+                        
+                        # Status emoji
+                        if parcela["status"] == "Pago":
+                            emoji = "✅"
+                            cor = "success"
+                        elif parcela["status"] == "Pendente":
+                            emoji = "⏳"
+                            cor = "warning"
+                        elif parcela["status"] == "Cancelado":
+                            emoji = "❌"
+                            cor = "secondary"
+                        else:
+                            emoji = "❓"
+                            cor = "info"
+                        
+                        with col_parcela1:
+                            st.write(f"{emoji} **Parcela {parcela['parcela_numero']}/{parcela['parcela_total']}**")
+                        
+                        with col_parcela2:
+                            st.write(f"💰 R$ {float(parcela['valor']):,.2f}")
+                        
+                        with col_parcela3:
+                            st.write(f"📅 {formatar_data_br(parcela['data_vencimento'])}")
+                        
+                        with col_parcela4:
+                            if parcela["status"] == "Pendente":
+                                if st.button("✅", key=f"pagar_grupo_{parcela['id_cobranca']}", help="Marcar como pago"):
+                                    data_hoje = date.today().isoformat()
+                                    resultado = marcar_cobranca_como_paga(parcela['id_cobranca'], data_hoje)
+                                    if resultado.get("success"):
+                                        st.success("✅ Parcela marcada como paga!")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Erro: {resultado.get('error')}")
+        
+        # Mostrar cobranças individuais
+        if individuais:
+            st.markdown("#### 📝 Cobranças Individuais")
+            
+            for cobranca in individuais:
+                tipo_display = TIPOS_COBRANCA_DISPLAY.get(cobranca['tipo_cobranca'], cobranca['tipo_cobranca'])
+                
+                # Status emoji
+                if cobranca["status"] == "Pago":
+                    emoji = "✅"
+                    cor = "success"
+                elif cobranca["status"] == "Pendente":
+                    emoji = "⏳"
+                    cor = "warning"
+                elif cobranca["status"] == "Cancelado":
+                    emoji = "❌"
+                    cor = "secondary"
+                else:
+                    emoji = "❓"
+                    cor = "info"
+                
+                with st.expander(f"{emoji} {tipo_display} - {cobranca['titulo']} - R$ {float(cobranca['valor']):,.2f}", expanded=False):
+                    
+                    col_ind1, col_ind2, col_ind3 = st.columns([2, 2, 1])
+                    
+                    with col_ind1:
+                        st.write(f"**👨‍🎓 Aluno:** {cobranca['alunos']['nome']}")
+                        st.write(f"**🎓 Turma:** {cobranca['alunos']['turmas']['nome_turma']}")
+                        st.write(f"**👤 Responsável:** {cobranca['responsaveis']['nome']}")
+                    
+                    with col_ind2:
+                        st.write(f"**💰 Valor:** R$ {float(cobranca['valor']):,.2f}")
+                        st.write(f"**📅 Vencimento:** {formatar_data_br(cobranca['data_vencimento'])}")
+                        st.write(f"**📊 Status:** {cobranca['status']}")
+                    
+                    with col_ind3:
+                        if cobranca["status"] == "Pendente":
+                            if st.button("✅ Pagar", key=f"pagar_individual_{cobranca['id_cobranca']}", type="primary"):
+                                data_hoje = date.today().isoformat()
+                                resultado = marcar_cobranca_como_paga(cobranca['id_cobranca'], data_hoje)
+                                if resultado.get("success"):
+                                    st.success("✅ Cobrança marcada como paga!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Erro: {resultado.get('error')}")
+                        
+                        if st.button("🗑️ Cancelar", key=f"cancelar_individual_{cobranca['id_cobranca']}", help="Cancelar cobrança"):
+                            resultado = cancelar_cobranca(cobranca['id_cobranca'], "Cancelado via interface")
+                            if resultado.get("success"):
+                                st.success("✅ Cobrança cancelada!")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Erro: {resultado.get('error')}")
+        
+        # Ações em lote
+        st.markdown("---")
+        st.markdown("#### ⚡ Ações em Lote")
+        
+        col_lote1, col_lote2 = st.columns(2)
+        
+        with col_lote1:
+            if st.button("✅ Marcar Todas Pendentes como Pagas", help="Marca todas as cobranças pendentes como pagas"):
+                pendentes_ids = [c["id_cobranca"] for c in cobranças_filtradas if c["status"] == "Pendente"]
+                
+                if pendentes_ids:
+                    with st.spinner(f"Marcando {len(pendentes_ids)} cobranças como pagas..."):
+                        sucessos = 0
+                        erros = []
+                        data_hoje = date.today().isoformat()
+                        
+                        for id_cobranca in pendentes_ids:
+                            resultado = marcar_cobranca_como_paga(id_cobranca, data_hoje)
+                            if resultado.get("success"):
+                                sucessos += 1
+                            else:
+                                erros.append(f"ID {id_cobranca}: {resultado.get('error')}")
+                        
+                        if sucessos > 0:
+                            st.success(f"✅ {sucessos} cobranças marcadas como pagas!")
+                        
+                        if erros:
+                            st.error(f"❌ {len(erros)} erros encontrados")
+                        
+                        st.rerun()
+                else:
+                    st.info("ℹ️ Nenhuma cobrança pendente encontrada")
+        
+        with col_lote2:
+            if st.button("📊 Exportar Relatório", help="Exporta relatório das cobranças filtradas"):
+                # Preparar dados para exportação
+                dados_exportacao = []
+                
+                for cobranca in cobranças_filtradas:
+                    dados_exportacao.append({
+                        "ID": cobranca["id_cobranca"],
+                        "Título": cobranca["titulo"],
+                        "Aluno": cobranca["alunos"]["nome"],
+                        "Turma": cobranca["alunos"]["turmas"]["nome_turma"],
+                        "Responsável": cobranca["responsaveis"]["nome"],
+                        "Tipo": TIPOS_COBRANCA_DISPLAY.get(cobranca["tipo_cobranca"], cobranca["tipo_cobranca"]),
+                        "Valor": f"R$ {float(cobranca['valor']):,.2f}",
+                        "Vencimento": formatar_data_br(cobranca["data_vencimento"]),
+                        "Status": cobranca["status"],
+                        "Grupo": cobranca.get("grupo_cobranca", "Individual"),
+                        "Parcela": f"{cobranca.get('parcela_numero', 1)}/{cobranca.get('parcela_total', 1)}" if cobranca.get("grupo_cobranca") else "N/A"
+                    })
+                
+                df = pd.DataFrame(dados_exportacao)
+                csv = df.to_csv(index=False)
+                
+                st.download_button(
+                    label="📥 Baixar CSV",
+                    data=csv,
+                    file_name=f"relatorio_cobrancas_{date.today().isoformat()}.csv",
+                    mime="text/csv"
+                )
+    
+    else:
+        st.info("ℹ️ Nenhuma cobrança encontrada com os filtros aplicados")
+
+def mostrar_interface_relatorios_cobrancas():
+    """Interface para relatórios de cobranças"""
+    st.markdown("### 📊 Relatórios de Cobranças")
+    
+    # Carregar dados para relatórios
+    with st.spinner("Carregando dados para relatórios..."):
+        try:
+            response = supabase.table("cobrancas").select("""
+                id_cobranca, titulo, valor, data_vencimento, status, tipo_cobranca,
+                grupo_cobranca, parcela_numero, parcela_total, prioridade, inserted_at,
+                alunos!inner(id, nome, turmas!inner(nome_turma)),
+                responsaveis!inner(id, nome)
+            """).execute()
+            
+            if not response.data:
+                st.info("ℹ️ Nenhuma cobrança encontrada no sistema")
+                return
+            
+            cobranças_dados = response.data
+            
+        except Exception as e:
+            st.error(f"❌ Erro ao carregar dados: {str(e)}")
+            return
+    
+    # Relatórios disponíveis
+    relatorio_tabs = st.tabs([
+        "📊 Visão Geral",
+        "🎯 Por Tipo de Cobrança", 
+        "🎓 Por Turma",
+        "⏰ Por Status",
+        "📅 Por Período"
+    ])
+    
+    # TAB: Visão Geral
+    with relatorio_tabs[0]:
+        st.markdown("#### 📊 Visão Geral do Sistema")
+        
+        # Métricas gerais
+        total_cobrancas = len(cobranças_dados)
+        valor_total_sistema = sum(float(c["valor"]) for c in cobranças_dados)
+        cobrancas_pendentes = len([c for c in cobranças_dados if c["status"] == "Pendente"])
+        cobrancas_pagas = len([c for c in cobranças_dados if c["status"] == "Pago"])
+        
+        col_geral1, col_geral2, col_geral3, col_geral4 = st.columns(4)
+        
+        with col_geral1:
+            st.metric("📋 Total de Cobranças", total_cobrancas)
+        
+        with col_geral2:
+            st.metric("💰 Valor Total", f"R$ {valor_total_sistema:,.2f}")
+        
+        with col_geral3:
+            st.metric("⏳ Pendentes", cobrancas_pendentes, delta=f"{(cobrancas_pendentes/total_cobrancas*100):.1f}%")
+        
+        with col_geral4:
+            st.metric("✅ Pagas", cobrancas_pagas, delta=f"{(cobrancas_pagas/total_cobrancas*100):.1f}%")
+        
+        # Gráficos
+        col_graf1, col_graf2 = st.columns(2)
+        
+        with col_graf1:
+            # Gráfico de status
+            status_counts = {}
+            for cobranca in cobranças_dados:
+                status = cobranca["status"]
+                if status not in status_counts:
+                    status_counts[status] = 0
+                status_counts[status] += 1
+            
+            st.markdown("**📊 Distribuição por Status**")
+            for status, count in status_counts.items():
+                percentage = (count / total_cobrancas) * 100
+                st.write(f"• {status}: {count} ({percentage:.1f}%)")
+        
+        with col_graf2:
+            # Gráfico de tipos
+            tipo_counts = {}
+            for cobranca in cobranças_dados:
+                tipo = cobranca["tipo_cobranca"]
+                if tipo not in tipo_counts:
+                    tipo_counts[tipo] = 0
+                tipo_counts[tipo] += 1
+            
+            st.markdown("**🎯 Distribuição por Tipo**")
+            for tipo, count in tipo_counts.items():
+                tipo_display = TIPOS_COBRANCA_DISPLAY.get(tipo, tipo)
+                percentage = (count / total_cobrancas) * 100
+                st.write(f"• {tipo_display}: {count} ({percentage:.1f}%)")
+    
+    # TAB: Por Tipo
+    with relatorio_tabs[1]:
+        st.markdown("#### 🎯 Relatório por Tipo de Cobrança")
+        
+        tipos_stats = {}
+        for cobranca in cobranças_dados:
+            tipo = cobranca["tipo_cobranca"]
+            if tipo not in tipos_stats:
+                tipos_stats[tipo] = {
+                    "total": 0,
+                    "valor_total": 0,
+                    "pendentes": 0,
+                    "pagas": 0,
+                    "valor_pendente": 0,
+                    "valor_pago": 0
+                }
+            
+            tipos_stats[tipo]["total"] += 1
+            tipos_stats[tipo]["valor_total"] += float(cobranca["valor"])
+            
+            if cobranca["status"] == "Pendente":
+                tipos_stats[tipo]["pendentes"] += 1
+                tipos_stats[tipo]["valor_pendente"] += float(cobranca["valor"])
+            elif cobranca["status"] == "Pago":
+                tipos_stats[tipo]["pagas"] += 1
+                tipos_stats[tipo]["valor_pago"] += float(cobranca["valor"])
+        
+        for tipo, stats in tipos_stats.items():
+            tipo_display = TIPOS_COBRANCA_DISPLAY.get(tipo, tipo)
+            
+            with st.expander(f"{tipo_display} - {stats['total']} cobranças - R$ {stats['valor_total']:,.2f}", expanded=True):
+                col_tipo1, col_tipo2, col_tipo3, col_tipo4 = st.columns(4)
+                
+                with col_tipo1:
+                    st.metric("📋 Total", stats["total"])
+                
+                with col_tipo2:
+                    st.metric("💰 Valor Total", f"R$ {stats['valor_total']:,.2f}")
+                
+                with col_tipo3:
+                    st.metric("⏳ Pendentes", stats["pendentes"], delta=f"R$ {stats['valor_pendente']:,.2f}")
+                
+                with col_tipo4:
+                    st.metric("✅ Pagas", stats["pagas"], delta=f"R$ {stats['valor_pago']:,.2f}")
+    
+    # TAB: Por Turma
+    with relatorio_tabs[2]:
+        st.markdown("#### 🎓 Relatório por Turma")
+        
+        turmas_stats = {}
+        for cobranca in cobranças_dados:
+            turma = cobranca["alunos"]["turmas"]["nome_turma"]
+            if turma not in turmas_stats:
+                turmas_stats[turma] = {
+                    "total": 0,
+                    "valor_total": 0,
+                    "pendentes": 0,
+                    "pagas": 0,
+                    "alunos": set()
+                }
+            
+            turmas_stats[turma]["total"] += 1
+            turmas_stats[turma]["valor_total"] += float(cobranca["valor"])
+            turmas_stats[turma]["alunos"].add(cobranca["alunos"]["id"])
+            
+            if cobranca["status"] == "Pendente":
+                turmas_stats[turma]["pendentes"] += 1
+            elif cobranca["status"] == "Pago":
+                turmas_stats[turma]["pagas"] += 1
+        
+        for turma, stats in turmas_stats.items():
+            with st.expander(f"🎓 {turma} - {len(stats['alunos'])} alunos - {stats['total']} cobranças", expanded=True):
+                col_turma1, col_turma2, col_turma3, col_turma4 = st.columns(4)
+                
+                with col_turma1:
+                    st.metric("👨‍🎓 Alunos", len(stats["alunos"]))
+                
+                with col_turma2:
+                    st.metric("📋 Cobranças", stats["total"])
+                
+                with col_turma3:
+                    st.metric("💰 Valor Total", f"R$ {stats['valor_total']:,.2f}")
+                
+                with col_turma4:
+                    taxa_pagamento = (stats["pagas"] / stats["total"] * 100) if stats["total"] > 0 else 0
+                    st.metric("📊 Taxa Pagamento", f"{taxa_pagamento:.1f}%")
+    
+    # TAB: Por Status
+    with relatorio_tabs[3]:
+        st.markdown("#### ⏰ Relatório por Status")
+        
+        status_stats = {}
+        for cobranca in cobranças_dados:
+            status = cobranca["status"]
+            if status not in status_stats:
+                status_stats[status] = {
+                    "total": 0,
+                    "valor_total": 0,
+                    "alunos": set()
+                }
+            
+            status_stats[status]["total"] += 1
+            status_stats[status]["valor_total"] += float(cobranca["valor"])
+            status_stats[status]["alunos"].add(cobranca["alunos"]["id"])
+        
+        for status, stats in status_stats.items():
+            emoji = "✅" if status == "Pago" else "⏳" if status == "Pendente" else "❌"
+            
+            with st.expander(f"{emoji} {status} - {stats['total']} cobranças - R$ {stats['valor_total']:,.2f}", expanded=True):
+                col_status1, col_status2, col_status3 = st.columns(3)
+                
+                with col_status1:
+                    st.metric("📋 Cobranças", stats["total"])
+                
+                with col_status2:
+                    st.metric("💰 Valor Total", f"R$ {stats['valor_total']:,.2f}")
+                
+                with col_status3:
+                    st.metric("👨‍🎓 Alunos Únicos", len(stats["alunos"]))
+    
+    # TAB: Por Período
+    with relatorio_tabs[4]:
+        st.markdown("#### 📅 Relatório por Período")
+        
+        # Filtros de período
+        col_periodo1, col_periodo2 = st.columns(2)
+        
+        with col_periodo1:
+            data_inicio = st.date_input(
+                "📅 Data Início:",
+                value=date.today() - timedelta(days=30),
+                help="Data de início do período para análise"
+            )
+        
+        with col_periodo2:
+            data_fim = st.date_input(
+                "📅 Data Fim:",
+                value=date.today(),
+                help="Data de fim do período para análise"
+            )
+        
+        # Filtrar cobranças por período
+        cobranças_periodo = []
+        for cobranca in cobranças_dados:
+            data_vencimento = datetime.strptime(cobranca["data_vencimento"], "%Y-%m-%d").date()
+            if data_inicio <= data_vencimento <= data_fim:
+                cobranças_periodo.append(cobranca)
+        
+        if cobranças_periodo:
+            st.markdown(f"#### 📊 Análise do Período: {formatar_data_br(data_inicio.isoformat())} a {formatar_data_br(data_fim.isoformat())}")
+            
+            # Métricas do período
+            total_periodo = len(cobranças_periodo)
+            valor_total_periodo = sum(float(c["valor"]) for c in cobranças_periodo)
+            pendentes_periodo = len([c for c in cobranças_periodo if c["status"] == "Pendente"])
+            pagas_periodo = len([c for c in cobranças_periodo if c["status"] == "Pago"])
+            
+            col_periodo_stats1, col_periodo_stats2, col_periodo_stats3, col_periodo_stats4 = st.columns(4)
+            
+            with col_periodo_stats1:
+                st.metric("📋 Total no Período", total_periodo)
+            
+            with col_periodo_stats2:
+                st.metric("💰 Valor Total", f"R$ {valor_total_periodo:,.2f}")
+            
+            with col_periodo_stats3:
+                st.metric("⏳ Pendentes", pendentes_periodo, delta=f"{(pendentes_periodo/total_periodo*100):.1f}%")
+            
+            with col_periodo_stats4:
+                st.metric("✅ Pagas", pagas_periodo, delta=f"{(pagas_periodo/total_periodo*100):.1f}%")
+            
+            # Gráfico por data
+            st.markdown("**📈 Cobranças por Data de Vencimento**")
+            
+            # Agrupar por data
+            datas_valores = {}
+            for cobranca in cobranças_periodo:
+                data_venc = cobranca["data_vencimento"]
+                if data_venc not in datas_valores:
+                    datas_valores[data_venc] = 0
+                datas_valores[data_venc] += float(cobranca["valor"])
+            
+            # Mostrar resumo por data
+            for data, valor in sorted(datas_valores.items()):
+                cobranças_data = [c for c in cobranças_periodo if c["data_vencimento"] == data]
+                st.write(f"📅 {formatar_data_br(data)}: {len(cobranças_data)} cobranças - R$ {valor:,.2f}")
+        
+        else:
+            st.info("ℹ️ Nenhuma cobrança encontrada no período selecionado")
 
 # ==========================================================
 # 🚀 EXECUTAR APLICAÇÃO

@@ -17,7 +17,8 @@ from .base import (
     supabase, AlunoSchema, ResponsavelSchema, TurmaSchema, AlunoResponsavelSchema,
     gerar_id_aluno, gerar_id_responsavel, gerar_id_vinculo,
     tratar_valores_none, obter_timestamp, formatar_data_br, formatar_valor_br,
-    TIPOS_RELACAO, TURNOS_VALIDOS
+    TIPOS_RELACAO, TURNOS_VALIDOS, gerar_id_cobranca, gerar_grupo_cobranca,
+    TIPOS_COBRANCA, TIPOS_COBRANCA_DISPLAY, PRIORIDADES_COBRANCA
 )
 
 # ==========================================================
@@ -140,6 +141,179 @@ def buscar_alunos_para_dropdown(termo_busca: str = "") -> Dict:
             "opcoes": opcoes,
             "count": len(opcoes)
         }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def listar_mensalidades_para_cancelamento(id_aluno: str, data_saida: str) -> Dict:
+    """
+    Lista mensalidades que serão canceladas ao trancar matrícula
+    
+    Args:
+        id_aluno: ID do aluno
+        data_saida: Data de saída no formato YYYY-MM-DD
+        
+    Returns:
+        Dict: {"success": bool, "mensalidades": List[Dict], "count": int}
+    """
+    try:
+        from datetime import datetime, timedelta
+        from calendar import monthrange
+        
+        # Buscar dados do aluno
+        aluno_response = supabase.table("alunos").select("""
+            id, nome, dia_vencimento, valor_mensalidade
+        """).eq("id", id_aluno).execute()
+        
+        if not aluno_response.data:
+            return {"success": False, "error": "Aluno não encontrado"}
+        
+        aluno = aluno_response.data[0]
+        
+        if not aluno.get("dia_vencimento"):
+            return {"success": False, "error": "Aluno não possui dia de vencimento configurado"}
+        
+        # Calcular data de corte (primeiro dia do mês seguinte à data de saída)
+        data_saida_obj = datetime.strptime(data_saida, "%Y-%m-%d")
+        
+        # Primeiro dia do mês seguinte
+        if data_saida_obj.month == 12:
+            data_corte = datetime(data_saida_obj.year + 1, 1, 1)
+        else:
+            data_corte = datetime(data_saida_obj.year, data_saida_obj.month + 1, 1)
+        
+        # Buscar mensalidades do aluno que não foram pagas
+        mensalidades_response = supabase.table("mensalidades").select("""
+            id_mensalidade, mes_referencia, valor, data_vencimento, status, observacoes
+        """).eq("id_aluno", id_aluno).not_.in_("status", ["Pago", "Pago parcial", "Cancelado"]).execute()
+        
+        # Filtrar mensalidades que serão canceladas
+        mensalidades_cancelar = []
+        for mensalidade in mensalidades_response.data:
+            data_vencimento = datetime.strptime(mensalidade["data_vencimento"], "%Y-%m-%d")
+            
+            # Se a data de vencimento é igual ou posterior à data de corte, será cancelada
+            if data_vencimento >= data_corte:
+                mensalidades_cancelar.append({
+                    "id_mensalidade": mensalidade["id_mensalidade"],
+                    "mes_referencia": mensalidade["mes_referencia"],
+                    "valor": float(mensalidade["valor"]),
+                    "data_vencimento": mensalidade["data_vencimento"],
+                    "status": mensalidade["status"],
+                    "observacoes": mensalidade.get("observacoes", "")
+                })
+        
+        # Ordenar por data de vencimento
+        mensalidades_cancelar.sort(key=lambda x: x["data_vencimento"])
+        
+        return {
+            "success": True,
+            "mensalidades": mensalidades_cancelar,
+            "count": len(mensalidades_cancelar),
+            "data_corte": data_corte.strftime("%Y-%m-%d"),
+            "aluno_nome": aluno["nome"]
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def trancar_matricula_aluno(id_aluno: str, data_saida: str, motivo_saida: str = "trancamento") -> Dict:
+    """
+    Tranca matrícula do aluno e cancela mensalidades futuras
+    
+    Args:
+        id_aluno: ID do aluno
+        data_saida: Data de saída no formato YYYY-MM-DD
+        motivo_saida: Motivo do trancamento
+        
+    Returns:
+        Dict: {"success": bool, "mensalidades_canceladas": int, "data": Dict}
+    """
+    try:
+        # 1. Verificar se aluno existe e não está já trancado
+        aluno_response = supabase.table("alunos").select("""
+            id, nome, situacao, data_saida
+        """).eq("id", id_aluno).execute()
+        
+        if not aluno_response.data:
+            return {"success": False, "error": "Aluno não encontrado"}
+        
+        aluno = aluno_response.data[0]
+        
+        if aluno.get("situacao") == "trancado":
+            return {"success": False, "error": "Aluno já está com matrícula trancada"}
+        
+        # 2. Listar mensalidades que serão canceladas
+        mensalidades_resultado = listar_mensalidades_para_cancelamento(id_aluno, data_saida)
+        
+        if not mensalidades_resultado.get("success"):
+            return {"success": False, "error": f"Erro ao listar mensalidades: {mensalidades_resultado.get('error')}"}
+        
+        mensalidades_cancelar = mensalidades_resultado["mensalidades"]
+        
+        # 3. Atualizar situação do aluno
+        dados_update_aluno = {
+            "situacao": "trancado",
+            "data_saida": data_saida,
+            "motivo_saida": motivo_saida,
+            "updated_at": obter_timestamp()
+        }
+        
+        aluno_update_response = supabase.table("alunos").update(dados_update_aluno).eq("id", id_aluno).execute()
+        
+        if not aluno_update_response.data:
+            return {"success": False, "error": "Erro ao atualizar situação do aluno"}
+        
+        # 4. Cancelar mensalidades futuras
+        mensalidades_canceladas = 0
+        erros_cancelamento = []
+        
+        for mensalidade in mensalidades_cancelar:
+            try:
+                observacoes_original = mensalidade.get("observacoes", "")
+                nova_observacao = f"Cancelada por trancamento de matrícula em {formatar_data_br(data_saida)}"
+                
+                if observacoes_original:
+                    observacoes_final = f"{observacoes_original} | {nova_observacao}"
+                else:
+                    observacoes_final = nova_observacao
+                
+                dados_update_mensalidade = {
+                    "status": "Cancelado",
+                    "observacoes": observacoes_final,
+                    "updated_at": obter_timestamp()
+                }
+                
+                mens_update_response = supabase.table("mensalidades").update(dados_update_mensalidade).eq(
+                    "id_mensalidade", mensalidade["id_mensalidade"]
+                ).execute()
+                
+                if mens_update_response.data:
+                    mensalidades_canceladas += 1
+                else:
+                    erros_cancelamento.append(f"Erro ao cancelar mensalidade {mensalidade['mes_referencia']}")
+                    
+            except Exception as e:
+                erros_cancelamento.append(f"Erro ao cancelar mensalidade {mensalidade['mes_referencia']}: {str(e)}")
+        
+        # 5. Preparar resposta
+        resultado = {
+            "success": True,
+            "aluno_nome": aluno["nome"],
+            "data_saida": data_saida,
+            "motivo_saida": motivo_saida,
+            "mensalidades_canceladas": mensalidades_canceladas,
+            "total_mensalidades": len(mensalidades_cancelar),
+            "data": aluno_update_response.data[0],
+            "mensalidades_afetadas": mensalidades_cancelar
+        }
+        
+        # Adicionar erros se houver
+        if erros_cancelamento:
+            resultado["erros_cancelamento"] = erros_cancelamento
+            resultado["aviso"] = f"Matrícula trancada, mas {len(erros_cancelamento)} mensalidades não puderam ser canceladas"
+        
+        return resultado
         
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -269,6 +443,7 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
         aluno_response = supabase.table("alunos").select("""
             id, nome, turno, data_nascimento, dia_vencimento, 
             data_matricula, valor_mensalidade, mensalidades_geradas,
+            situacao, data_saida, motivo_saida,
             turmas!inner(id, nome_turma)
         """).eq("id", id_aluno).execute()
         
@@ -324,12 +499,15 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
         
         mensalidades = []
         for mensalidade in mensalidades_response.data:
-            # Calcular status real baseado na data
+            # Calcular status real baseado na data e status do banco
             from datetime import datetime
             data_hoje = datetime.now().date()
             data_vencimento = datetime.strptime(mensalidade["data_vencimento"], "%Y-%m-%d").date()
             
-            if mensalidade["status"] in ["Pago", "Pago parcial"]:
+            if mensalidade["status"] == "Cancelado":
+                status_real = "Cancelado"
+                status_cor = "secondary"
+            elif mensalidade["status"] in ["Pago", "Pago parcial"]:
                 status_real = mensalidade["status"]
                 status_cor = "success" if status_real == "Pago" else "warning"
             elif data_vencimento < data_hoje:
@@ -354,6 +532,7 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
         
         # 5. Calcular estatísticas
         mensalidades_pagas = len([m for m in mensalidades if m["status"] in ["Pago", "Pago parcial"]])
+        mensalidades_canceladas = len([m for m in mensalidades if m["status_real"] == "Cancelado"])
         mensalidades_pendentes = len([m for m in mensalidades if m["status_real"] in ["A vencer", "Vencida"]])
         mensalidades_vencidas = len([m for m in mensalidades if m["status_real"] == "Vencida"])
         
@@ -368,7 +547,10 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
             "dia_vencimento": aluno.get("dia_vencimento"),
             "data_matricula": aluno.get("data_matricula"),
             "valor_mensalidade": float(aluno.get("valor_mensalidade", 0)),
-            "mensalidades_geradas": aluno.get("mensalidades_geradas", False)
+            "mensalidades_geradas": aluno.get("mensalidades_geradas", False),
+            "situacao": aluno.get("situacao", "ativo"),
+            "data_saida": aluno.get("data_saida"),
+            "motivo_saida": aluno.get("motivo_saida")
         }
         
         # Estatísticas financeiras
@@ -378,6 +560,7 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
             "total_pago": total_pago,
             "total_mensalidades": len(mensalidades),
             "mensalidades_pagas": mensalidades_pagas,
+            "mensalidades_canceladas": mensalidades_canceladas,
             "mensalidades_pendentes": mensalidades_pendentes,
             "mensalidades_vencidas": mensalidades_vencidas,
             "valor_mensalidade": aluno_formatado["valor_mensalidade"]
@@ -410,7 +593,8 @@ def atualizar_aluno_campos(id_aluno: str, campos: Dict) -> Dict:
         # Campos permitidos
         campos_permitidos = [
             "nome", "turno", "data_nascimento", "dia_vencimento", 
-            "data_matricula", "valor_mensalidade", "mensalidades_geradas"
+            "data_matricula", "valor_mensalidade", "mensalidades_geradas",
+            "situacao", "data_saida", "motivo_saida"
         ]
         
         # Filtrar apenas campos permitidos
@@ -1102,5 +1286,449 @@ def atualizar_responsavel_campos(id_responsavel: str, campos: Dict) -> Dict:
         else:
             return {"success": False, "error": "Responsável não encontrado"}
             
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ==========================================================
+# 💰 GESTÃO DE COBRANÇAS
+# ==========================================================
+
+def listar_cobrancas_aluno(id_aluno: str, incluir_pagas: bool = True) -> Dict:
+    """
+    Lista todas as cobranças de um aluno
+    
+    Args:
+        id_aluno: ID do aluno
+        incluir_pagas: Se deve incluir cobranças já pagas
+        
+    Returns:
+        Dict: {"success": bool, "cobrancas": List[Dict], "count": int, "estatisticas": Dict}
+    """
+    try:
+        query = supabase.table("cobrancas").select("""
+            id_cobranca, titulo, descricao, valor, data_vencimento, data_pagamento,
+            status, tipo_cobranca, grupo_cobranca, parcela_numero, parcela_total,
+            observacoes, prioridade, inserted_at, updated_at,
+            responsaveis!inner(id, nome)
+        """).eq("id_aluno", id_aluno)
+        
+        if not incluir_pagas:
+            query = query.neq("status", "Pago")
+        
+        query = query.order("data_vencimento", desc=False)
+        response = query.execute()
+        
+        if not response.data:
+            return {
+                "success": True,
+                "cobrancas": [],
+                "count": 0,
+                "estatisticas": {
+                    "total_pendente": 0,
+                    "valor_pendente": 0.0,
+                    "total_vencido": 0,
+                    "valor_vencido": 0.0,
+                    "total_pago": 0,
+                    "valor_pago": 0.0
+                }
+            }
+        
+        # Processar cobranças e calcular estatísticas
+        cobrancas_formatadas = []
+        estatisticas = {
+            "total_pendente": 0,
+            "valor_pendente": 0.0,
+            "total_vencido": 0,
+            "valor_vencido": 0.0,
+            "total_pago": 0,
+            "valor_pago": 0.0
+        }
+        
+        from datetime import datetime
+        data_hoje = datetime.now().date()
+        
+        for cobranca in response.data:
+            # Calcular status real baseado na data
+            status_original = cobranca["status"]
+            data_vencimento = datetime.strptime(cobranca["data_vencimento"], "%Y-%m-%d").date()
+            
+            if status_original == "Pago":
+                status_real = "Pago"
+                status_cor = "success"
+                emoji = "✅"
+                estatisticas["total_pago"] += 1
+                estatisticas["valor_pago"] += float(cobranca["valor"])
+            elif status_original == "Cancelado":
+                status_real = "Cancelado"
+                status_cor = "secondary"
+                emoji = "❌"
+            elif data_vencimento < data_hoje:
+                status_real = "Vencido"
+                status_cor = "error"
+                emoji = "⚠️"
+                estatisticas["total_vencido"] += 1
+                estatisticas["valor_vencido"] += float(cobranca["valor"])
+            else:
+                status_real = "Pendente"
+                status_cor = "warning"
+                emoji = "⏳"
+                estatisticas["total_pendente"] += 1
+                estatisticas["valor_pendente"] += float(cobranca["valor"])
+            
+            # Formatar cobrança
+            cobranca_formatada = {
+                "id_cobranca": cobranca["id_cobranca"],
+                "titulo": cobranca["titulo"],
+                "descricao": cobranca.get("descricao"),
+                "valor": float(cobranca["valor"]),
+                "data_vencimento": cobranca["data_vencimento"],
+                "data_pagamento": cobranca.get("data_pagamento"),
+                "status": status_original,
+                "status_real": status_real,
+                "status_cor": status_cor,
+                "emoji": emoji,
+                "tipo_cobranca": cobranca["tipo_cobranca"],
+                "tipo_display": TIPOS_COBRANCA_DISPLAY.get(cobranca["tipo_cobranca"], "📝 Outros"),
+                "grupo_cobranca": cobranca.get("grupo_cobranca"),
+                "parcela_numero": cobranca.get("parcela_numero", 1),
+                "parcela_total": cobranca.get("parcela_total", 1),
+                "observacoes": cobranca.get("observacoes"),
+                "prioridade": cobranca.get("prioridade", 1),
+                "prioridade_display": PRIORIDADES_COBRANCA.get(cobranca.get("prioridade", 1), "🔸 Normal"),
+                "responsavel_nome": cobranca["responsaveis"]["nome"] if cobranca.get("responsaveis") else "N/A",
+                "data_vencimento_br": formatar_data_br(cobranca["data_vencimento"]),
+                "data_pagamento_br": formatar_data_br(cobranca.get("data_pagamento")) if cobranca.get("data_pagamento") else None,
+                "valor_br": formatar_valor_br(cobranca["valor"])
+            }
+            
+            # Adicionar informações de parcela se aplicável
+            if cobranca.get("grupo_cobranca") and cobranca.get("parcela_total", 1) > 1:
+                cobranca_formatada["titulo_completo"] = f"{cobranca['titulo']} ({cobranca.get('parcela_numero', 1)}/{cobranca.get('parcela_total', 1)})"
+            else:
+                cobranca_formatada["titulo_completo"] = cobranca["titulo"]
+            
+            cobrancas_formatadas.append(cobranca_formatada)
+        
+        return {
+            "success": True,
+            "cobrancas": cobrancas_formatadas,
+            "count": len(cobrancas_formatadas),
+            "estatisticas": estatisticas
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def cadastrar_cobranca_individual(id_aluno: str, id_responsavel: str, dados_cobranca: Dict) -> Dict:
+    """
+    Cadastra uma cobrança individual
+    
+    Args:
+        id_aluno: ID do aluno
+        id_responsavel: ID do responsável
+        dados_cobranca: Dict com dados da cobrança
+        
+    Returns:
+        Dict: {"success": bool, "id_cobranca": str, "data": Dict}
+    """
+    try:
+        # Validar aluno e responsável existem
+        aluno_check = supabase.table("alunos").select("id, nome").eq("id", id_aluno).execute()
+        if not aluno_check.data:
+            return {"success": False, "error": f"Aluno com ID {id_aluno} não encontrado"}
+        
+        resp_check = supabase.table("responsaveis").select("id, nome").eq("id", id_responsavel).execute()
+        if not resp_check.data:
+            return {"success": False, "error": f"Responsável com ID {id_responsavel} não encontrado"}
+        
+        # Gerar ID da cobrança
+        id_cobranca = gerar_id_cobranca()
+        
+        # Preparar dados da cobrança
+        dados_cadastro = {
+            "id_cobranca": id_cobranca,
+            "id_aluno": id_aluno,
+            "id_responsavel": id_responsavel,
+            "titulo": dados_cobranca.get("titulo"),
+            "descricao": dados_cobranca.get("descricao"),
+            "valor": float(dados_cobranca.get("valor", 0)),
+            "data_vencimento": dados_cobranca.get("data_vencimento"),
+            "status": "Pendente",
+            "tipo_cobranca": dados_cobranca.get("tipo_cobranca", "outros"),
+            "grupo_cobranca": dados_cobranca.get("grupo_cobranca"),
+            "parcela_numero": int(dados_cobranca.get("parcela_numero", 1)),
+            "parcela_total": int(dados_cobranca.get("parcela_total", 1)),
+            "observacoes": dados_cobranca.get("observacoes"),
+            "prioridade": int(dados_cobranca.get("prioridade", 2)),
+            "inserted_at": obter_timestamp(),
+            "updated_at": obter_timestamp()
+        }
+        
+        # Remover campos None/vazios
+        dados_cadastro = {k: v for k, v in dados_cadastro.items() if v is not None and v != ""}
+        
+        # Inserir no banco
+        response = supabase.table("cobrancas").insert(dados_cadastro).execute()
+        
+        if not response.data:
+            return {"success": False, "error": "Erro ao cadastrar cobrança"}
+        
+        return {
+            "success": True,
+            "id_cobranca": id_cobranca,
+            "titulo": dados_cadastro["titulo"],
+            "valor": dados_cadastro["valor"],
+            "data": response.data[0]
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def cadastrar_cobranca_parcelada(id_aluno: str, id_responsavel: str, dados_cobranca: Dict) -> Dict:
+    """
+    Cadastra uma cobrança parcelada (ex: formatura em 6x)
+    
+    Args:
+        id_aluno: ID do aluno
+        id_responsavel: ID do responsável
+        dados_cobranca: Dict com dados da cobrança parcelada
+        
+    Returns:
+        Dict: {"success": bool, "cobrancas_criadas": int, "ids_cobrancas": List[str]}
+    """
+    try:
+        # Validar parâmetros obrigatórios
+        titulo_base = dados_cobranca.get("titulo")
+        valor_parcela = float(dados_cobranca.get("valor_parcela", 0))
+        numero_parcelas = int(dados_cobranca.get("numero_parcelas", 1))
+        data_primeira_parcela = dados_cobranca.get("data_primeira_parcela")
+        tipo_cobranca = dados_cobranca.get("tipo_cobranca", "outros")
+        
+        if not all([titulo_base, valor_parcela > 0, numero_parcelas > 0, data_primeira_parcela]):
+            return {"success": False, "error": "Parâmetros obrigatórios não fornecidos"}
+        
+        if numero_parcelas > 24:
+            return {"success": False, "error": "Número máximo de parcelas é 24"}
+        
+        # Gerar ID do grupo
+        grupo_cobranca = gerar_grupo_cobranca(tipo_cobranca, id_aluno)
+        
+        # Calcular datas de vencimento
+        from datetime import datetime, timedelta
+        from dateutil.relativedelta import relativedelta
+        
+        data_base = datetime.strptime(data_primeira_parcela, "%Y-%m-%d").date()
+        
+        cobrancas_criadas = []
+        ids_cobrancas = []
+        
+        for i in range(numero_parcelas):
+            # Calcular data de vencimento (soma meses)
+            data_vencimento = data_base + relativedelta(months=i)
+            
+            # Preparar dados da parcela
+            dados_parcela = {
+                "titulo": f"{titulo_base} - Parcela {i+1}/{numero_parcelas}",
+                "descricao": dados_cobranca.get("descricao"),
+                "valor": valor_parcela,
+                "data_vencimento": data_vencimento.isoformat(),
+                "tipo_cobranca": tipo_cobranca,
+                "grupo_cobranca": grupo_cobranca,
+                "parcela_numero": i + 1,
+                "parcela_total": numero_parcelas,
+                "observacoes": dados_cobranca.get("observacoes"),
+                "prioridade": dados_cobranca.get("prioridade", 2)
+            }
+            
+            # Cadastrar parcela
+            resultado_parcela = cadastrar_cobranca_individual(id_aluno, id_responsavel, dados_parcela)
+            
+            if resultado_parcela.get("success"):
+                cobrancas_criadas.append(resultado_parcela)
+                ids_cobrancas.append(resultado_parcela["id_cobranca"])
+            else:
+                # Se uma parcela falhar, reverter todas as criadas
+                for id_cobranca in ids_cobrancas:
+                    supabase.table("cobrancas").delete().eq("id_cobranca", id_cobranca).execute()
+                
+                return {
+                    "success": False, 
+                    "error": f"Erro ao criar parcela {i+1}: {resultado_parcela.get('error')}"
+                }
+        
+        return {
+            "success": True,
+            "cobrancas_criadas": len(cobrancas_criadas),
+            "ids_cobrancas": ids_cobrancas,
+            "grupo_cobranca": grupo_cobranca,
+            "titulo_base": titulo_base,
+            "valor_total": valor_parcela * numero_parcelas
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def atualizar_cobranca(id_cobranca: str, campos: Dict) -> Dict:
+    """
+    Atualiza campos específicos de uma cobrança
+    
+    Args:
+        id_cobranca: ID da cobrança
+        campos: Dict com campos a atualizar
+        
+    Returns:
+        Dict: {"success": bool, "campos_atualizados": List[str], "data": Dict}
+    """
+    try:
+        campos_permitidos = [
+            "titulo", "descricao", "valor", "data_vencimento", "status",
+            "tipo_cobranca", "observacoes", "prioridade"
+        ]
+        
+        dados_update = {k: v for k, v in campos.items() if k in campos_permitidos}
+        
+        if not dados_update:
+            return {"success": False, "error": "Nenhum campo válido para atualizar"}
+        
+        dados_update["updated_at"] = obter_timestamp()
+        
+        response = supabase.table("cobrancas").update(dados_update).eq("id_cobranca", id_cobranca).execute()
+        
+        if response.data:
+            return {
+                "success": True,
+                "campos_atualizados": list(dados_update.keys()),
+                "data": response.data[0]
+            }
+        else:
+            return {"success": False, "error": "Cobrança não encontrada"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def marcar_cobranca_como_paga(id_cobranca: str, data_pagamento: str, id_pagamento: str = None) -> Dict:
+    """
+    Marca uma cobrança como paga
+    
+    Args:
+        id_cobranca: ID da cobrança
+        data_pagamento: Data do pagamento (YYYY-MM-DD)
+        id_pagamento: ID do pagamento relacionado (opcional)
+        
+    Returns:
+        Dict: {"success": bool, "data": Dict}
+    """
+    try:
+        dados_update = {
+            "status": "Pago",
+            "data_pagamento": data_pagamento,
+            "updated_at": obter_timestamp()
+        }
+        
+        if id_pagamento:
+            dados_update["id_pagamento"] = id_pagamento
+        
+        response = supabase.table("cobrancas").update(dados_update).eq("id_cobranca", id_cobranca).execute()
+        
+        if response.data:
+            return {
+                "success": True,
+                "data": response.data[0],
+                "message": "Cobrança marcada como paga"
+            }
+        else:
+            return {"success": False, "error": "Cobrança não encontrada"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def cancelar_cobranca(id_cobranca: str, motivo: str = None) -> Dict:
+    """
+    Cancela uma cobrança
+    
+    Args:
+        id_cobranca: ID da cobrança
+        motivo: Motivo do cancelamento (opcional)
+        
+    Returns:
+        Dict: {"success": bool, "data": Dict}
+    """
+    try:
+        dados_update = {
+            "status": "Cancelado",
+            "updated_at": obter_timestamp()
+        }
+        
+        if motivo:
+            observacoes_atuais = supabase.table("cobrancas").select("observacoes").eq("id_cobranca", id_cobranca).execute()
+            if observacoes_atuais.data:
+                obs_existentes = observacoes_atuais.data[0].get("observacoes", "")
+                if obs_existentes:
+                    dados_update["observacoes"] = f"{obs_existentes} | Cancelado: {motivo}"
+                else:
+                    dados_update["observacoes"] = f"Cancelado: {motivo}"
+        
+        response = supabase.table("cobrancas").update(dados_update).eq("id_cobranca", id_cobranca).execute()
+        
+        if response.data:
+            return {
+                "success": True,
+                "data": response.data[0],
+                "message": "Cobrança cancelada"
+            }
+        else:
+            return {"success": False, "error": "Cobrança não encontrada"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def listar_cobrancas_por_grupo(grupo_cobranca: str) -> Dict:
+    """
+    Lista todas as cobranças de um grupo (ex: todas as parcelas da formatura)
+    
+    Args:
+        grupo_cobranca: ID do grupo de cobranças
+        
+    Returns:
+        Dict: {"success": bool, "cobrancas": List[Dict], "count": int}
+    """
+    try:
+        response = supabase.table("cobrancas").select("""
+            id_cobranca, titulo, valor, data_vencimento, status, 
+            parcela_numero, parcela_total,
+            alunos!inner(nome),
+            responsaveis!inner(nome)
+        """).eq("grupo_cobranca", grupo_cobranca).order("parcela_numero").execute()
+        
+        if not response.data:
+            return {
+                "success": True,
+                "cobrancas": [],
+                "count": 0
+            }
+        
+        cobrancas_formatadas = []
+        for cobranca in response.data:
+            cobranca_formatada = {
+                "id_cobranca": cobranca["id_cobranca"],
+                "titulo": cobranca["titulo"],
+                "valor": float(cobranca["valor"]),
+                "data_vencimento": cobranca["data_vencimento"],
+                "status": cobranca["status"],
+                "parcela_numero": cobranca["parcela_numero"],
+                "parcela_total": cobranca["parcela_total"],
+                "aluno_nome": cobranca["alunos"]["nome"],
+                "responsavel_nome": cobranca["responsaveis"]["nome"],
+                "data_vencimento_br": formatar_data_br(cobranca["data_vencimento"]),
+                "valor_br": formatar_valor_br(cobranca["valor"])
+            }
+            cobrancas_formatadas.append(cobranca_formatada)
+        
+        return {
+            "success": True,
+            "cobrancas": cobrancas_formatadas,
+            "count": len(cobrancas_formatadas)
+        }
+        
     except Exception as e:
         return {"success": False, "error": str(e)} 

@@ -2020,7 +2020,10 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
             data_hoje = datetime.now().date()
             data_vencimento = datetime.strptime(mensalidade["data_vencimento"], "%Y-%m-%d").date()
             
-            if mensalidade["status"] in ["Pago", "Pago parcial"]:
+            if mensalidade["status"] == "Cancelado":
+                status_real = "Cancelado"
+                status_cor = "secondary"
+            elif mensalidade["status"] in ["Pago", "Pago parcial"]:
                 status_real = mensalidade["status"]
                 status_cor = "success" if status_real == "Pago" else "warning"
             elif data_vencimento < data_hoje:
@@ -2045,6 +2048,7 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
         
         # 5. Calcular estatísticas
         mensalidades_pagas = len([m for m in mensalidades if m["status"] in ["Pago", "Pago parcial"]])
+        mensalidades_canceladas = len([m for m in mensalidades if m["status_real"] == "Cancelado"])
         mensalidades_pendentes = len([m for m in mensalidades if m["status_real"] in ["A vencer", "Vencida"]])
         mensalidades_vencidas = len([m for m in mensalidades if m["status_real"] == "Vencida"])
         
@@ -2069,6 +2073,7 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
             "total_pago": total_pago,
             "total_mensalidades": len(mensalidades),
             "mensalidades_pagas": mensalidades_pagas,
+            "mensalidades_canceladas": mensalidades_canceladas,
             "mensalidades_pendentes": mensalidades_pendentes,
             "mensalidades_vencidas": mensalidades_vencidas,
             "valor_mensalidade": aluno_formatado["valor_mensalidade"]
