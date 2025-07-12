@@ -1305,7 +1305,7 @@ def listar_mensalidades_disponiveis_aluno(id_aluno: str) -> Dict:
             hoje = date.today()
             
             if data_vencimento < hoje:
-                status_texto = "⚠️ Vencida"
+                status_texto = "⚠️ Atrasado"
             else:
                 status_texto = "📅 A vencer"
             
@@ -2027,7 +2027,7 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
                 status_real = mensalidade["status"]
                 status_cor = "success" if status_real == "Pago" else "warning"
             elif data_vencimento < data_hoje:
-                status_real = "Vencida"
+                status_real = "Atrasado"
                 status_cor = "error"
             else:
                 status_real = "A vencer"
@@ -2049,8 +2049,8 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
         # 5. Calcular estatísticas
         mensalidades_pagas = len([m for m in mensalidades if m["status"] in ["Pago", "Pago parcial"]])
         mensalidades_canceladas = len([m for m in mensalidades if m["status_real"] == "Cancelado"])
-        mensalidades_pendentes = len([m for m in mensalidades if m["status_real"] in ["A vencer", "Vencida"]])
-        mensalidades_vencidas = len([m for m in mensalidades if m["status_real"] == "Vencida"])
+        mensalidades_pendentes = len([m for m in mensalidades if m["status_real"] in ["A vencer", "Atrasado"]])
+        mensalidades_vencidas = len([m for m in mensalidades if m["status_real"] == "Atrasado"])
         
         # Formatar dados do aluno
         aluno_formatado = {
@@ -2414,6 +2414,119 @@ def verificar_pode_gerar_mensalidades(id_aluno: str) -> Dict:
         
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+# ==========================================================
+# 📅 FUNÇÕES DE ATUALIZAÇÃO AUTOMÁTICA DE STATUS
+# ==========================================================
+
+def atualizar_status_mensalidades_automatico(limite_registros: int = 1000) -> Dict:
+    """
+    Atualiza automaticamente o status das mensalidades de "A vencer" 
+    para "Atrasado" quando a data de vencimento for anterior à data atual.
+    
+    Args:
+        limite_registros: Limite de registros para processar por vez
+        
+    Returns:
+        Dict: {"success": bool, "atualizadas": int, "detalhes": List}
+    """
+    try:
+        from datetime import datetime, date
+        
+        # Data atual
+        data_hoje = date.today().isoformat()
+        
+        # Buscar mensalidades com status "A vencer" e data de vencimento anterior a hoje
+        response = supabase.table("mensalidades").select(
+            "id_mensalidade, mes_referencia, data_vencimento, status, id_aluno"
+        ).eq("status", "A vencer").lt("data_vencimento", data_hoje).limit(limite_registros).execute()
+        
+        if not response.data:
+            return {
+                "success": True,
+                "atualizadas": 0,
+                "detalhes": [],
+                "message": "Nenhuma mensalidade precisava ser atualizada"
+            }
+        
+        # Atualizar cada mensalidade
+        mensalidades_atualizadas = []
+        erros = []
+        
+        for mensalidade in response.data:
+            try:
+                # Atualizar status para "Atrasado"
+                update_response = supabase.table("mensalidades").update({
+                    "status": "Atrasado",
+                    "updated_at": datetime.now().isoformat()
+                }).eq("id_mensalidade", mensalidade["id_mensalidade"]).execute()
+                
+                if update_response.data:
+                    mensalidades_atualizadas.append({
+                        "id_mensalidade": mensalidade["id_mensalidade"],
+                        "mes_referencia": mensalidade["mes_referencia"],
+                        "data_vencimento": mensalidade["data_vencimento"],
+                        "status_anterior": "A vencer",
+                        "status_novo": "Atrasado"
+                    })
+                else:
+                    erros.append(f"Erro ao atualizar {mensalidade['id_mensalidade']}")
+                    
+            except Exception as e:
+                erros.append(f"Erro na mensalidade {mensalidade['id_mensalidade']}: {str(e)}")
+        
+        resultado = {
+            "success": True,
+            "atualizadas": len(mensalidades_atualizadas),
+            "total_encontradas": len(response.data),
+            "detalhes": mensalidades_atualizadas,
+            "erros": erros,
+            "data_execucao": datetime.now().isoformat()
+        }
+        
+        if erros:
+            resultado["warning"] = f"{len(erros)} mensalidades não puderam ser atualizadas"
+            
+        return resultado
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Erro ao atualizar status das mensalidades: {str(e)}",
+            "atualizadas": 0
+        }
+
+def verificar_mensalidades_precisam_atualizacao() -> Dict:
+    """
+    Verifica quantas mensalidades precisam ter o status atualizado
+    sem fazer a atualização.
+    
+    Returns:
+        Dict: {"success": bool, "count": int, "mensalidades": List}
+    """
+    try:
+        from datetime import date
+        
+        data_hoje = date.today().isoformat()
+        
+        # Contar mensalidades que precisam ser atualizadas
+        response = supabase.table("mensalidades").select(
+            "id_mensalidade, mes_referencia, data_vencimento, id_aluno"
+        ).eq("status", "A vencer").lt("data_vencimento", data_hoje).execute()
+        
+        return {
+            "success": True,
+            "count": len(response.data),
+            "mensalidades": response.data,
+            "data_verificacao": date.today().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "count": 0
+        }
 
 if __name__ == "__main__":
     print("🧪 Testando funções otimizadas...")

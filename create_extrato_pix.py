@@ -13,7 +13,7 @@ from supabase import create_client
 load_dotenv()
 sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-CSV_PATH   = "recebimentos_11_06_03_07.csv"
+CSV_PATH   = "recebimentos_04_07_07_07.csv"
 TABLE_NAME = "extrato_pix"
 BATCH      = 500          # lote de inserção
 
@@ -27,33 +27,32 @@ def normalize(text: str) -> str:
                     if t not in {"de", "da", "do", "dos", "das"})
 
 def load_csv(path: str) -> pd.DataFrame:
-    df = (pd.read_csv(path, sep=",", dtype={"valor": "float"})
-            .rename(columns={
-                "origemDestinatario": "nome_remetente",
-                "dataEHora"        : "data_pagamento",
-                "chavesPix"        : "chave_pix",
-                "idOperacao"       : "id"
-            })
-            .assign(
-                nome_remetente=lambda d: d["nome_remetente"].map(normalize),
-                data_pagamento=lambda d: pd.to_datetime(
-                    d["data_pagamento"],
-                    format='%m/%d/%Y',
-                    errors='coerce'
-                ).fillna(pd.to_datetime(
-                    d["data_pagamento"],
-                    format='%d/%m/%Y',
-                    errors='coerce'
-                )).dt.date.astype(str),
-                chave_pix      = lambda d: d["chave_pix"].fillna(""),
-                status         = "novo",
-                id_responsavel = None,
-                id_aluno       = None,
-                tipo_pagamento = None,
-                parcelas_identificadas = None,
-                observacoes    = ""
-            )
-          )
+    df = pd.read_csv(path, sep=";", dtype={"valor": "float"})
+    
+    # Primeiro, renomear as colunas
+    df = df.rename(columns={
+        "origemDestinatario": "nome_remetente",
+        "dataEHora"        : "data_pagamento",
+        "chavesPix"        : "chave_pix",
+        "idOperacao"       : "id"
+    })
+    
+    # Depois, aplicar as transformações
+    df = df.assign(
+        nome_remetente=lambda d: d["nome_remetente"].map(normalize),
+        data_pagamento=lambda d: pd.to_datetime(
+            d["data_pagamento"],
+            format='%d/%m/%Y',
+            errors='coerce'
+        ).dt.date.astype(str),
+        chave_pix      = lambda d: d["chave_pix"].fillna(""),
+        status         = "novo",
+        id_responsavel = None,
+        id_aluno       = None,
+        tipo_pagamento = None,
+        parcelas_identificadas = None,
+        observacoes    = ""
+    )
 
     df["observacoes"] = df["observacoes"].astype(str).str[:5000]
     return df.drop_duplicates(subset="id")

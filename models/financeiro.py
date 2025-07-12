@@ -322,10 +322,10 @@ def listar_mensalidades_disponiveis_aluno(id_aluno: str) -> Dict:
         Dict: {"success": bool, "mensalidades": List[Dict], "count": int}
     """
     try:
-        # Buscar mensalidades pendentes (A vencer, Vencida)
+        # Buscar mensalidades pendentes (A vencer, Atrasado)
         response = supabase.table("mensalidades").select("""
             id_mensalidade, mes_referencia, valor, data_vencimento, status, observacoes
-        """).eq("id_aluno", id_aluno).in_("status", ["A vencer", "Vencida"]).order("data_vencimento").execute()
+        """).eq("id_aluno", id_aluno).in_("status", ["A vencer", "Atrasado"]).order("data_vencimento").execute()
         
         if not response.data:
             return {
@@ -344,9 +344,9 @@ def listar_mensalidades_disponiveis_aluno(id_aluno: str) -> Dict:
             
             # Calcular status real e dias de atraso/antecedência
             if data_vencimento < data_hoje:
-                status_real = "Vencida"
+                status_real = "Atrasado"
                 dias_diferenca = (data_hoje - data_vencimento).days
-                status_texto = f"Vencida há {dias_diferenca} dias"
+                status_texto = f"Atrasado há {dias_diferenca} dias"
             else:
                 status_real = "A vencer"
                 dias_diferenca = (data_vencimento - data_hoje).days

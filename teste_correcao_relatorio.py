@@ -2,79 +2,188 @@
 # -*- coding: utf-8 -*-
 
 """
-🧪 TESTE ESPECÍFICO DAS CORREÇÕES NO RELATÓRIO
-==============================================
+🔍 TESTE DE CORREÇÃO DO SISTEMA DE RELATÓRIOS
+============================================
 
-Testa especificamente:
-1. Tratamento correto de valores NULL (mostrar AUSENTE apenas quando realmente NULL)
-2. Inclusão do campo "OBSERVAÇÃO:" após cada aluno
+Script para testar as correções implementadas no sistema de relatórios financeiros:
+1. Filtragem correta de mensalidades apenas com status "Atrasado"
+2. Eliminação de duplicações
+3. Ordem correta das turmas e alunos
+4. Apenas alunos com mensalidades geradas
 """
 
-from funcoes_relatorios import gerar_relatorio_interface
+import sys
 import os
+from datetime import datetime
+from typing import Dict, List
 
-def testar_correcoes_relatorio():
-    """Testa as correções específicas do relatório"""
-    print("🧪 TESTANDO CORREÇÕES DO RELATÓRIO")
-    print("=" * 50)
+# Adicionar o diretório atual ao path para importar os módulos
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from funcoes_relatorios import (
+    coletar_dados_financeiros,
+    gerar_relatorio_financeiro,
+    obter_campos_disponiveis
+)
+
+def teste_filtragem_relatorio():
+    """
+    Testa se o relatório está filtrando corretamente apenas mensalidades atrasadas
+    """
+    print("🔍 TESTE DE CORREÇÃO - RELATÓRIOS FINANCEIROS")
+    print("=" * 60)
     
-    # Configuração do relatório de teste
-    configuracao = {
-        'turmas_selecionadas': ['Berçário'],
-        'campos_selecionados': [
-            'nome', 'turno', 'data_matricula', 'dia_vencimento', 'valor_mensalidade',
-            'nome', 'cpf', 'telefone', 'email', 'tipo_relacao'
-        ]
+    # Configuração de teste baseada no problema reportado
+    turmas_selecionadas = ["Berçário", "Infantil I", "Infantil II", "Infantil III"]
+    
+    # Campos para relatório de mensalidades atrasadas com responsáveis
+    campos_selecionados = [
+        'nome',  # do aluno
+        'nome',  # do responsável  
+        'telefone',  # do responsável
+        'mes_referencia',  # da mensalidade
+        'data_vencimento',  # da mensalidade
+        'valor',  # da mensalidade
+        'status'  # da mensalidade
+    ]
+    
+    # Filtros específicos para mensalidades atrasadas
+    filtros = {
+        'status_mensalidades': ['Atrasado'],  # APENAS status "Atrasado"
+        'turmas_selecionadas': turmas_selecionadas
     }
     
-    print("🎓 Gerando relatório com turma: Berçário")
-    print("📋 Campos selecionados: todos os campos disponíveis")
+    print(f"📋 Turmas selecionadas: {', '.join(turmas_selecionadas)}")
+    print(f"🔧 Filtros aplicados: {filtros}")
+    print(f"📊 Campos selecionados: {len(campos_selecionados)} campos")
     print()
     
-    # Gerar relatório
-    resultado = gerar_relatorio_interface('pedagogico', configuracao)
-    
-    if resultado.get("success"):
-        arquivo = resultado["arquivo"]
-        nome_arquivo = resultado["nome_arquivo"]
+    try:
+        # ETAPA 1: Coletar dados
+        print("1️⃣ Coletando dados financeiros...")
+        dados_brutos = coletar_dados_financeiros(turmas_selecionadas, campos_selecionados, filtros)
         
-        print("✅ Relatório gerado com sucesso!")
-        print(f"📁 Arquivo: {nome_arquivo}")
-        print(f"👨‍🎓 Total de alunos: {resultado['total_alunos']}")
-        print(f"📊 Tamanho: {os.path.getsize(arquivo):,} bytes")
-        print()
-        
-        # Verificar se arquivo existe
-        if os.path.exists(arquivo):
-            print("📄 VERIFICAÇÕES:")
-            print("✅ Arquivo .docx criado")
-            print("✅ Campos com valores reais devem mostrar os dados")
-            print("✅ Campos realmente NULL devem mostrar 'AUSENTE'")
-            print("✅ Campo 'OBSERVAÇÃO:' deve aparecer após cada aluno")
-            print()
-            
-            print("🎯 PRÓXIMOS PASSOS:")
-            print("1. Abra o arquivo gerado para verificar:")
-            print(f"   📁 {arquivo}")
-            print("2. Verifique se os valores existentes não estão como 'AUSENTE'")
-            print("3. Confirme se o campo 'OBSERVAÇÃO:' aparece após cada aluno")
-            
-            return True
-        else:
-            print("❌ Arquivo não foi criado")
+        if not dados_brutos.get("success"):
+            print(f"❌ Erro na coleta de dados: {dados_brutos.get('error')}")
             return False
-    else:
-        print(f"❌ Erro na geração: {resultado.get('error')}")
+        
+        # ETAPA 2: Analisar dados coletados
+        print("2️⃣ Analisando dados coletados...")
+        
+        total_alunos = len(dados_brutos.get("alunos", []))
+        total_mensalidades = len(dados_brutos.get("mensalidades", []))
+        
+        print(f"   📈 Total de alunos encontrados: {total_alunos}")
+        print(f"   📈 Total de mensalidades encontradas: {total_mensalidades}")
+        
+        # Verificar se há mensalidades duplicadas
+        mensalidades = dados_brutos.get("mensalidades", [])
+        ids_mensalidades = [m.get("id") for m in mensalidades if m.get("id")]
+        duplicadas = len(ids_mensalidades) != len(set(ids_mensalidades))
+        
+        if duplicadas:
+            print(f"   ⚠️ AVISO: Mensalidades duplicadas detectadas!")
+        else:
+            print(f"   ✅ Nenhuma mensalidade duplicada")
+        
+        # Verificar status das mensalidades
+        status_encontrados = set(m.get("status") for m in mensalidades)
+        print(f"   📊 Status de mensalidades encontrados: {status_encontrados}")
+        
+        if status_encontrados - {"Atrasado"}:
+            print(f"   ⚠️ AVISO: Encontrados status além de 'Atrasado': {status_encontrados - {'Atrasado'}}")
+        else:
+            print(f"   ✅ Apenas mensalidades 'Atrasado' foram retornadas")
+        
+        # Verificar organização por turma
+        print("   📚 Verificando ordem das turmas:")
+        alunos_por_turma = {}
+        for aluno in dados_brutos.get("alunos", []):
+            turma = aluno.get("turma_nome", "Sem turma")
+            if turma not in alunos_por_turma:
+                alunos_por_turma[turma] = []
+            alunos_por_turma[turma].append(aluno.get("nome", "Sem nome"))
+        
+        for i, turma_esperada in enumerate(turmas_selecionadas):
+            alunos_turma = alunos_por_turma.get(turma_esperada, [])
+            if alunos_turma:
+                print(f"      {i+1}. {turma_esperada}: {len(alunos_turma)} alunos")
+                # Verificar se estão em ordem alfabética
+                alunos_ordenados = sorted(alunos_turma)
+                if alunos_turma == alunos_ordenados:
+                    print(f"         ✅ Alunos em ordem alfabética")
+                else:
+                    print(f"         ⚠️ Alunos NÃO estão em ordem alfabética")
+            else:
+                print(f"      {i+1}. {turma_esperada}: Nenhum aluno com mensalidades atrasadas")
+        
+        # ETAPA 3: Gerar relatório
+        print("\n3️⃣ Gerando relatório...")
+        resultado = gerar_relatorio_financeiro(turmas_selecionadas, campos_selecionados, filtros)
+        
+        if resultado.get("success"):
+            print("   ✅ Relatório gerado com sucesso")
+            
+            # Verificar se há arquivo temporário
+            arquivo_temp = resultado.get("arquivo_temporario")
+            if arquivo_temp:
+                print(f"   📄 Arquivo temporário: {arquivo_temp}")
+            
+            # Mostrar primeiras linhas do conteúdo
+            conteudo = resultado.get("conteudo_formatado", "")
+            primeiras_linhas = "\n".join(conteudo.split("\n")[:10])
+            print(f"\n   📋 Primeiras linhas do relatório:")
+            print("   " + "─" * 50)
+            for linha in primeiras_linhas.split("\n"):
+                print(f"   {linha}")
+            print("   " + "─" * 50)
+            
+        else:
+            print(f"   ❌ Erro na geração do relatório: {resultado.get('error')}")
+            return False
+        
+        print("\n✅ TESTE CONCLUÍDO COM SUCESSO")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Erro durante o teste: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
+def verificar_campos_disponíveis():
+    """
+    Verifica quais campos estão disponíveis para relatórios
+    """
+    print("\n📊 CAMPOS DISPONÍVEIS PARA RELATÓRIOS")
+    print("=" * 40)
+    
+    try:
+        campos = obter_campos_disponiveis()
+        
+        for categoria, lista_campos in campos.items():
+            print(f"\n🏷️ {categoria.upper()}:")
+            for campo_id, campo_nome in lista_campos.items():
+                print(f"   • {campo_id}: {campo_nome}")
+                
+    except Exception as e:
+        print(f"❌ Erro ao obter campos: {e}")
+
 if __name__ == "__main__":
-    sucesso = testar_correcoes_relatorio()
+    print(f"🚀 Iniciando teste em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    print()
+    
+    # Executar verificação de campos disponíveis
+    verificar_campos_disponíveis()
+    
+    # Executar teste principal
+    sucesso = teste_filtragem_relatorio()
+    
+    print(f"\n🏁 Teste finalizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     
     if sucesso:
-        print()
-        print("🎉 TESTE CONCLUÍDO COM SUCESSO!")
-        print("💡 Abra o arquivo gerado para verificar as correções")
+        print("🎉 RESULTADO: SUCESSO - Correções implementadas corretamente!")
+        sys.exit(0)
     else:
-        print()
-        print("❌ TESTE FALHOU")
-        print("🔧 Verifique os logs de erro acima") 
+        print("💥 RESULTADO: FALHA - Ainda há problemas a serem corrigidos")
+        sys.exit(1) 

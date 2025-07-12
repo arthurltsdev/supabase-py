@@ -511,7 +511,7 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
                 status_real = mensalidade["status"]
                 status_cor = "success" if status_real == "Pago" else "warning"
             elif data_vencimento < data_hoje:
-                status_real = "Vencida"
+                status_real = "Atrasado"
                 status_cor = "error"
             else:
                 status_real = "A vencer"
@@ -533,8 +533,8 @@ def buscar_informacoes_completas_aluno(id_aluno: str) -> Dict:
         # 5. Calcular estatísticas
         mensalidades_pagas = len([m for m in mensalidades if m["status"] in ["Pago", "Pago parcial"]])
         mensalidades_canceladas = len([m for m in mensalidades if m["status_real"] == "Cancelado"])
-        mensalidades_pendentes = len([m for m in mensalidades if m["status_real"] in ["A vencer", "Vencida"]])
-        mensalidades_vencidas = len([m for m in mensalidades if m["status_real"] == "Vencida"])
+        mensalidades_pendentes = len([m for m in mensalidades if m["status_real"] in ["A vencer", "Atrasado"]])
+        mensalidades_vencidas = len([m for m in mensalidades if m["status_real"] == "Atrasado"])
         
         # Formatar dados do aluno
         aluno_formatado = {

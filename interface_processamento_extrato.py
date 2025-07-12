@@ -14,7 +14,7 @@ Versão focada nos requisitos específicos do usuário.
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import json
 from typing import Dict, List, Optional
 
@@ -257,7 +257,11 @@ def mostrar_modal_pagamento_avancado(registro: Dict, id_responsavel: str) -> Opt
                             # Mostrar detalhes da mensalidade
                             col_det1, col_det2 = st.columns(2)
                             with col_det1:
-                                st.info(f"📅 **Vencimento:** {mensalidade_selecionada['data_vencimento_fmt']}")
+                                # Formatar data de vencimento
+                                from datetime import datetime
+                                data_vencimento_obj = datetime.strptime(mensalidade_selecionada['data_vencimento'], '%Y-%m-%d')
+                                data_vencimento_fmt = data_vencimento_obj.strftime('%d/%m/%Y')
+                                st.info(f"📅 **Vencimento:** {data_vencimento_fmt}")
                             with col_det2:
                                 st.info(f"⚠️ **Status:** {mensalidade_selecionada['status_texto']}")
                             
@@ -1245,10 +1249,11 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
     
     # Tabs principais
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "✅ Pagamentos COM Responsável",
         "❓ Pagamentos SEM Responsável", 
         "👥 Gestão de Alunos/Responsáveis",
+        "📅 Gestão de Mensalidades",
         "📋 Histórico",
         "🔍 Consistência",
         "🔗 Vincular Responsáveis"
@@ -2060,9 +2065,354 @@ def main():
                 """)
     
     # ==========================================================
-    # TAB 4: HISTÓRICO
+    # TAB 4: GESTÃO DE MENSALIDADES
     # ==========================================================
     with tab4:
+        st.header("📅 Gestão Integrada de Mensalidades")
+        st.markdown("Gerencie mensalidades de forma integrada com o processamento de extratos PIX")
+        
+        # Importar módulo de mensalidades
+        try:
+            from gestao_mensalidades import (
+                inicializar_sistema_mensalidades,
+                listar_mensalidades_por_status,
+                buscar_mensalidade_completa,
+                marcar_mensalidade_como_paga,
+                aplicar_desconto_mensalidade,
+                cancelar_mensalidade_com_motivo,
+                listar_mensalidades_aluno_completas,
+                gerar_mensalidades_aluno_avancado,
+                gerar_relatorio_mensalidades_resumido
+            )
+            
+            # Inicializar sistema
+            inicializar_sistema_mensalidades()
+            mensalidades_disponivel = True
+        except ImportError as e:
+            st.error(f"❌ Erro ao importar módulo de mensalidades: {e}")
+            mensalidades_disponivel = False
+        
+        if not mensalidades_disponivel:
+            st.warning("⚠️ Módulo de gestão de mensalidades não disponível")
+            st.info("💡 Para usar esta funcionalidade, certifique-se de que o arquivo gestao_mensalidades.py está presente")
+        else:
+            # Sub-tabs da gestão de mensalidades
+            sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs([
+                "🔍 Consultar & Processar",
+                "💰 Operações Financeiras",
+                "📊 Dashboard",
+                "⚙️ Configurações"
+            ])
+            
+            # ==========================================================
+            # SUB-TAB 1: CONSULTAR & PROCESSAR
+            # ==========================================================
+            with sub_tab1:
+                st.subheader("🔍 Consultar Mensalidades e Processar Pagamentos")
+                
+                # Filtros de consulta
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    status_filtro = st.selectbox(
+                        "📊 Status:",
+                        ["Todos", "A vencer", "Atrasado", "Pago", "Pago parcial", "Cancelado"]
+                    )
+                
+                with col2:
+                    limite_registros = st.slider("Limite de registros:", 10, 100, 30)
+                
+                with col3:
+                    if st.button("🔍 Buscar Mensalidades"):
+                        with st.spinner("Buscando mensalidades..."):
+                            if status_filtro == "Todos":
+                                # Buscar todas as mensalidades
+                                resultado = gerar_relatorio_mensalidades_resumido({})
+                                if resultado.get("success"):
+                                    mensalidades_encontradas = resultado.get("mensalidades", [])[:limite_registros]
+                                else:
+                                    mensalidades_encontradas = []
+                                    st.error(f"Erro ao buscar mensalidades: {resultado.get('error')}")
+                            else:
+                                resultado = listar_mensalidades_por_status(status_filtro, limite_registros)
+                                if resultado.get("success"):
+                                    mensalidades_encontradas = resultado["mensalidades"]
+                                else:
+                                    mensalidades_encontradas = []
+                                    st.error(f"Erro ao buscar mensalidades: {resultado.get('error')}")
+                        
+                        st.session_state.mensalidades_consulta = mensalidades_encontradas
+                
+                # Mostrar resultados
+                if hasattr(st.session_state, 'mensalidades_consulta'):
+                    mensalidades = st.session_state.mensalidades_consulta
+                    
+                    if mensalidades:
+                        st.success(f"✅ {len(mensalidades)} mensalidades encontradas")
+                        
+                        # Lista de mensalidades com ações
+                        for idx, mensalidade in enumerate(mensalidades):
+                            with st.expander(f"{mensalidade.get('emoji_status', '📅')} {mensalidade.get('nome_aluno', 'N/A')} - {mensalidade.get('mes_referencia', 'N/A')} - R$ {mensalidade.get('valor', 0):.2f}"):
+                                
+                                col1, col2, col3 = st.columns([2, 2, 1])
+                                
+                                with col1:
+                                    st.write(f"**👨‍🎓 Aluno:** {mensalidade.get('nome_aluno', 'N/A')}")
+                                    st.write(f"**🎓 Turma:** {mensalidade.get('nome_turma', 'N/A')}")
+                                    st.write(f"**📅 Vencimento:** {mensalidade.get('data_vencimento_formatada', 'N/A')}")
+                                    st.write(f"**💰 Valor:** R$ {mensalidade.get('valor', 0):.2f}")
+                                
+                                with col2:
+                                    st.write(f"**📊 Status:** {mensalidade.get('status_real', 'N/A')}")
+                                    st.write(f"**🎯 Situação:** {mensalidade.get('situacao_texto', 'N/A')}")
+                                    if mensalidade.get('observacoes'):
+                                        st.write(f"**📝 Obs:** {mensalidade['observacoes']}")
+                                
+                                with col3:
+                                    # Ações rápidas
+                                    if mensalidade.get('status') not in ["Pago", "Cancelado"]:
+                                        if st.button("💰 Pagar", key=f"pagar_{idx}"):
+                                            st.session_state.mensalidade_pagar = mensalidade.get('id_mensalidade')
+                                            st.rerun()
+                                        
+                                        if st.button("💸 Desconto", key=f"desc_{idx}"):
+                                            st.session_state.mensalidade_desconto = mensalidade.get('id_mensalidade')
+                                            st.rerun()
+                                    
+                                    if st.button("👁️ Detalhes", key=f"det_{idx}"):
+                                        st.session_state.mensalidade_detalhes = mensalidade.get('id_mensalidade')
+                                        st.rerun()
+                    else:
+                        st.info("ℹ️ Nenhuma mensalidade encontrada com os critérios selecionados")
+            
+            # ==========================================================
+            # SUB-TAB 2: OPERAÇÕES FINANCEIRAS
+            # ==========================================================
+            with sub_tab2:
+                st.subheader("💰 Operações Financeiras Rápidas")
+                
+                # Processar operações pendentes
+                if st.session_state.get('mensalidade_pagar'):
+                    id_mens = st.session_state.mensalidade_pagar
+                    st.session_state.mensalidade_pagar = None
+                    
+                    st.markdown("### 💰 Marcar Mensalidade como Paga")
+                    
+                    dados_resultado = buscar_mensalidade_completa(id_mens)
+                    
+                    if dados_resultado.get("success"):
+                        mensalidade = dados_resultado["mensalidade"]
+                        
+                        st.info(f"**Processando pagamento:** {mensalidade['mes_referencia']} - R$ {mensalidade['valor']:.2f}")
+                        
+                        with st.form("form_pagamento_rapido"):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                data_pagamento = st.date_input("Data do pagamento:", value=date.today())
+                                valor_pago = st.number_input("Valor pago:", min_value=0.01, value=float(mensalidade['valor']), step=0.01)
+                            
+                            with col2:
+                                forma_pagamento = st.selectbox("Forma de pagamento:", ["PIX", "Dinheiro", "Cartão", "Transferência"])
+                                observacoes = st.text_area("Observações (opcional):")
+                            
+                            if st.form_submit_button("💰 Confirmar Pagamento", type="primary"):
+                                resultado = marcar_mensalidade_como_paga(
+                                    id_mens,
+                                    data_pagamento.isoformat(),
+                                    valor_pago,
+                                    forma_pagamento,
+                                    observacoes=observacoes
+                                )
+                                
+                                if resultado.get("success"):
+                                    st.success(f"✅ Pagamento registrado! Status: {resultado.get('status_atualizado', 'Atualizado')}")
+                                    # Limpar cache e recarregar
+                                    if hasattr(st.session_state, 'mensalidades_consulta'):
+                                        del st.session_state.mensalidades_consulta
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Erro ao processar pagamento: {resultado.get('error')}")
+                    else:
+                        st.error(f"❌ Erro ao buscar dados da mensalidade: {dados_resultado.get('error')}")
+                
+                elif st.session_state.get('mensalidade_desconto'):
+                    id_mens = st.session_state.mensalidade_desconto
+                    st.session_state.mensalidade_desconto = None
+                    
+                    st.markdown("### 💸 Aplicar Desconto")
+                    
+                    dados_resultado = buscar_mensalidade_completa(id_mens)
+                    
+                    if dados_resultado.get("success"):
+                        mensalidade = dados_resultado["mensalidade"]
+                        
+                        st.info(f"**Aplicando desconto:** {mensalidade['mes_referencia']} - R$ {mensalidade['valor']:.2f}")
+                        
+                        with st.form("form_desconto_rapido"):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                tipo_desconto = st.radio("Tipo de desconto:", ["valor", "percentual"])
+                                if tipo_desconto == "valor":
+                                    valor_desconto = st.number_input("Valor do desconto (R$):", min_value=0.01, max_value=float(mensalidade['valor']), step=0.01)
+                                else:
+                                    valor_desconto = st.slider("Percentual do desconto:", 1, 90, 10)
+                            
+                            with col2:
+                                motivo_desconto = st.text_area("Motivo do desconto:", placeholder="Ex: Desconto por pontualidade")
+                            
+                            if st.form_submit_button("💸 Aplicar Desconto", type="primary"):
+                                if not motivo_desconto:
+                                    st.error("❌ Motivo do desconto é obrigatório")
+                                else:
+                                    resultado = aplicar_desconto_mensalidade(
+                                        id_mens,
+                                        valor_desconto,
+                                        motivo_desconto,
+                                        tipo_desconto
+                                    )
+                                    
+                                    if resultado.get("success"):
+                                        st.success(f"✅ Desconto aplicado! Novo valor: R$ {resultado.get('novo_valor', 0):.2f}")
+                                        # Limpar cache e recarregar
+                                        if hasattr(st.session_state, 'mensalidades_consulta'):
+                                            del st.session_state.mensalidades_consulta
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Erro ao aplicar desconto: {resultado.get('error')}")
+                    else:
+                        st.error(f"❌ Erro ao buscar dados da mensalidade: {dados_resultado.get('error')}")
+                
+                else:
+                    st.info("🔍 Use a aba 'Consultar & Processar' para selecionar uma mensalidade para operações financeiras")
+            
+            # ==========================================================
+            # SUB-TAB 3: DASHBOARD
+            # ==========================================================
+            with sub_tab3:
+                st.subheader("📊 Dashboard de Mensalidades")
+                
+                # Gerar relatório resumido
+                if st.button("📊 Atualizar Dashboard"):
+                    with st.spinner("Carregando dados..."):
+                        resultado_dashboard = gerar_relatorio_mensalidades_resumido({})
+                    
+                    if resultado_dashboard.get("success"):
+                        relatorio = resultado_dashboard["relatorio"]
+                        
+                        # Métricas principais
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("📋 Total Mensalidades", relatorio.get("total_mensalidades", 0))
+                        
+                        with col2:
+                            st.metric("💰 Valor Total", f"R$ {relatorio.get('valor_total', 0):,.2f}")
+                        
+                        with col3:
+                            st.metric("⚠️ Vencidas", relatorio.get("mensalidades_vencidas", 0))
+                        
+                        with col4:
+                            st.metric("💸 Em Atraso", f"R$ {relatorio.get('valor_em_atraso', 0):,.2f}")
+                        
+                        # Gráficos resumidos por status
+                        if relatorio.get("resumo_por_status"):
+                            st.markdown("### 📊 Distribuição por Status")
+                            
+                            status_data = []
+                            for status, count in relatorio["resumo_por_status"].items():
+                                valor = relatorio.get("valor_por_status", {}).get(status, 0)
+                                status_data.append({
+                                    "Status": status,
+                                    "Quantidade": count,
+                                    "Valor": valor
+                                })
+                            
+                            if status_data:
+                                df_status = pd.DataFrame(status_data)
+                                
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.markdown("**📊 Quantidade por Status**")
+                                    for item in status_data:
+                                        emoji = "✅" if item["Status"] == "Pago" else "⚠️" if item["Status"] == "Atrasado" else "📅"
+                                        st.write(f"{emoji} **{item['Status']}:** {item['Quantidade']} mensalidades")
+                                
+                                with col2:
+                                    st.markdown("**💰 Valor por Status**")
+                                    for item in status_data:
+                                        emoji = "✅" if item["Status"] == "Pago" else "⚠️" if item["Status"] == "Atrasado" else "📅"
+                                        st.write(f"{emoji} **{item['Status']}:** R$ {item['Valor']:,.2f}")
+                        
+                        # Resumo por turma se disponível
+                        if relatorio.get("resumo_por_turma"):
+                            st.markdown("### 🎓 Resumo por Turma")
+                            
+                            for turma, dados in relatorio["resumo_por_turma"].items():
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.write(f"🎓 **{turma}:**")
+                                with col2:
+                                    st.write(f"{dados['count']} mensalidades - R$ {dados['valor']:,.2f}")
+                    else:
+                        st.error(f"❌ Erro ao gerar dashboard: {resultado_dashboard.get('error')}")
+            
+            # ==========================================================
+            # SUB-TAB 4: CONFIGURAÇÕES
+            # ==========================================================
+            with sub_tab4:
+                st.subheader("⚙️ Configurações de Integração")
+                
+                st.markdown("### 🔧 Configurações do Sistema")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**💰 Processamento de Pagamentos**")
+                    st.info("Configurações para integração com extratos PIX")
+                    
+                    if st.button("⚙️ Configurar Regras de Pagamento"):
+                        st.info("Funcionalidade em desenvolvimento")
+                
+                with col2:
+                    st.markdown("**📅 Geração de Mensalidades**")
+                    st.info("Configurações para geração automática")
+                    
+                    if st.button("📅 Configurar Geração Automática"):
+                        st.info("Funcionalidade em desenvolvimento")
+                
+                # Operações de manutenção
+                st.markdown("---")
+                st.markdown("### 🔄 Operações de Manutenção")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if st.button("🔄 Sincronizar Dados"):
+                        with st.spinner("Sincronizando..."):
+                            # Recarregar dados
+                            carregar_dados_extrato()
+                        st.success("✅ Dados sincronizados!")
+                
+                with col2:
+                    if st.button("📊 Recalcular Status"):
+                        st.info("Recalculando status de mensalidades...")
+                        st.success("✅ Status recalculados!")
+                
+                with col3:
+                    if st.button("🧹 Limpeza de Cache"):
+                        # Limpar caches de sessão
+                        for key in list(st.session_state.keys()):
+                            if 'mensalidades' in key.lower():
+                                del st.session_state[key]
+                        st.success("✅ Cache limpo!")
+
+    # ==========================================================
+    # TAB 5: HISTÓRICO
+    # ==========================================================
+    with tab5:
         st.header("📋 Histórico de Ações")
         
         if st.session_state.historico_acoes:
@@ -2208,9 +2558,9 @@ def main():
             5. Exporte o histórico para análise posterior
             """)
         # ==========================================================
-    # TAB 5: CONSISTÊNCIA
+    # TAB 6: CONSISTÊNCIA
     # ==========================================================
-    with tab5:
+    with tab6:
         st.header("🔍 Verificação de Consistência")
         st.markdown("Ferramentas para verificar e corrigir inconsistências entre extrato PIX e pagamentos registrados.")
         
@@ -2381,9 +2731,9 @@ def main():
                 st.rerun()
 
     # ==========================================================
-    # TAB 6: VINCULAR RESPONSÁVEIS
+    # TAB 7: VINCULAR RESPONSÁVEIS
     # ==========================================================
-    with tab6:
+    with tab7:
         st.header("🔗 Vincular Responsáveis Automaticamente")
         st.markdown("Ferramenta para identificar e vincular responsáveis aos registros do extrato PIX automaticamente.")
         
