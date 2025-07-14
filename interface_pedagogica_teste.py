@@ -1218,6 +1218,16 @@ def main():
     # ==========================================================
     # TAB 8: RELATÓRIOS
     # ==========================================================
+    # Helper para seleção de campos via checkboxes
+    def checkbox_selecao(campos_dict: dict, label: str, key_prefix: str, default: List[str] = None) -> List[str]:
+        selecionados = []
+        st.markdown(f"**{label}**")
+        for campo, descricao in campos_dict.items():
+            checked = default is not None and campo in default
+            if st.checkbox(descricao, key=f"{key_prefix}_{campo}", value=checked):
+                selecionados.append(campo)
+        return selecionados
+    
     with tab8:
         st.header("📊 Relatórios e Geração de Documentos")
         
@@ -1274,122 +1284,118 @@ def main():
             "📋 Histórico de Relatórios"
         ])
         
-        # ==========================================================
-        # RELATÓRIO PEDAGÓGICO
-        # ==========================================================
-        with tab_pedagogico:
-            st.subheader("🎓 Relatório Pedagógico")
-            st.info("Gera relatório com dados dos alunos e responsáveis das turmas selecionadas")
-            
-            # Seleção de turmas
-            st.markdown("### 🎓 Seleção de Turmas")
-            turmas_resultado = listar_turmas_disponiveis()
-            
-            if turmas_resultado.get("success"):
-                turmas_selecionadas_ped = st.multiselect(
-                    "Selecione as turmas para o relatório:",
-                    options=turmas_resultado["turmas"],
-                    help="Selecione uma ou mais turmas"
+    # ==========================================================
+    # RELATÓRIO PEDAGÓGICO
+    # ==========================================================
+    with tab_pedagogico:
+        st.subheader("🎓 Relatório Pedagógico")
+        st.info("Gera relatório com dados dos alunos e responsáveis das turmas selecionadas")
+
+        # Seleção de turmas
+        st.markdown("### 🎓 Seleção de Turmas")
+        turmas_resultado = listar_turmas_disponiveis()
+        if turmas_resultado.get("success"):
+            turmas_selecionadas_ped = st.multiselect(
+                "Selecione as turmas para o relatório:",
+                options=turmas_resultado["turmas"],
+                help="Selecione uma ou mais turmas"
+            )
+        else:
+            st.error("Erro ao carregar turmas")
+            turmas_selecionadas_ped = []
+
+        # Seleção de campos
+        st.markdown("### 📋 Seleção de Campos")
+        campos_disponiveis = obter_campos_disponiveis()
+
+        # **1)** Garante que "situacao" esteja disponível
+        if "situacao" not in campos_disponiveis["aluno"]:
+            campos_disponiveis["aluno"]["situacao"] = "Situação"
+
+        col_aluno, col_responsavel = st.columns(2)
+
+        with col_aluno:
+            # Seleciona dinamicamente todos os campos do aluno
+            campos_aluno_selecionados = checkbox_selecao(
+                campos_disponiveis["aluno"],
+                "👨‍🎓 Campos do Aluno:",
+                "ped_aluno",
+                default=["nome"]
+            )
+            # Se o usuário marcou "situacao", exibe filtro
+            if "situacao" in campos_aluno_selecionados:
+                situacoes = st.multiselect(
+                    "🔍 Filtrar Situação:",
+                    ["matriculado", "trancado", "problema"],
+                    default=["matriculado", "trancado", "problema"],
+                    key="ped_situacoes"
                 )
             else:
-                st.error("Erro ao carregar turmas")
-                turmas_selecionadas_ped = []
-            
-            # Seleção de campos
-            st.markdown("### 📋 Seleção de Campos")
-            
-            campos_disponiveis = obter_campos_disponiveis()
-            
-            col_aluno, col_responsavel = st.columns(2)
-            
-            with col_aluno:
-                st.markdown("**👨‍🎓 Campos do Aluno:**")
-                campos_aluno_selecionados = []
-                
-                for campo, descricao in campos_disponiveis["aluno"].items():
-                    if st.checkbox(descricao, key=f"ped_aluno_{campo}", value=(campo == 'nome')):
-                        campos_aluno_selecionados.append(campo)
-            
-            with col_responsavel:
-                st.markdown("**👥 Campos do Responsável:**")
-                campos_responsavel_selecionados = []
-                
-                for campo, descricao in campos_disponiveis["responsavel"].items():
-                    if st.checkbox(descricao, key=f"ped_resp_{campo}"):
-                        campos_responsavel_selecionados.append(campo)
-            
-            # Visualizar seleção
-            if campos_aluno_selecionados or campos_responsavel_selecionados:
-                st.markdown("### 👀 Campos Selecionados")
-                
-                col_preview1, col_preview2 = st.columns(2)
-                
-                with col_preview1:
-                    if campos_aluno_selecionados:
-                        st.success(f"**👨‍🎓 Aluno:** {len(campos_aluno_selecionados)} campos")
-                        for campo in campos_aluno_selecionados:
-                            st.write(f"   ✅ {campos_disponiveis['aluno'][campo]}")
-                
-                with col_preview2:
-                    if campos_responsavel_selecionados:
-                        st.success(f"**👥 Responsável:** {len(campos_responsavel_selecionados)} campos")
-                        for campo in campos_responsavel_selecionados:
-                            st.write(f"   ✅ {campos_disponiveis['responsavel'][campo]}")
-            
-            # Botão de geração
-            st.markdown("---")
-            
-            if st.button("📊 Gerar Relatório Pedagógico", type="primary", use_container_width=True):
-                if not turmas_selecionadas_ped:
-                    st.error("❌ Selecione pelo menos uma turma")
-                elif not (campos_aluno_selecionados or campos_responsavel_selecionados):
-                    st.error("❌ Selecione pelo menos um campo")
+                # default: todas
+                situacoes = ["matriculado", "trancado", "problema"]
+
+        with col_responsavel:
+            campos_responsavel_selecionados = checkbox_selecao(
+                campos_disponiveis["responsavel"],
+                "👥 Campos do Responsável:",
+                "ped_resp"
+            )
+
+        # Preview da seleção (igual ao original)
+        if campos_aluno_selecionados or campos_responsavel_selecionados:
+            st.markdown("### 👀 Campos Selecionados")
+            col_preview1, col_preview2 = st.columns(2)
+            with col_preview1:
+                if campos_aluno_selecionados:
+                    st.success(f"**👨‍🎓 Aluno:** {len(campos_aluno_selecionados)} campos")
+                    for c in campos_aluno_selecionados:
+                        st.write(f"   ✅ {campos_disponiveis['aluno'][c]}")
+            with col_preview2:
+                if campos_responsavel_selecionados:
+                    st.success(f"**👥 Responsável:** {len(campos_responsavel_selecionados)} campos")
+                    for c in campos_responsavel_selecionados:
+                        st.write(f"   ✅ {campos_disponiveis['responsavel'][c]}")
+
+        st.markdown("---")
+        if st.button("📊 Gerar Relatório Pedagógico", type="primary", use_container_width=True):
+            if not turmas_selecionadas_ped:
+                st.error("❌ Selecione pelo menos uma turma")
+            elif not (campos_aluno_selecionados or campos_responsavel_selecionados):
+                st.error("❌ Selecione pelo menos um campo")
+            else:
+                todos_campos = campos_aluno_selecionados + campos_responsavel_selecionados
+                configuracao = {
+                    "turmas_selecionadas": turmas_selecionadas_ped,
+                    "campos_selecionados": todos_campos,
+                    "situacoes_filtradas": situacoes,              # ← Nome correto
+                }
+
+                with st.spinner("🤖 Gerando relatório pedagógico..."):
+                    resultado = gerar_relatorio_interface("pedagogico", configuracao)
+
+                if resultado.get("success"):
+                    st.success("✅ Relatório gerado com sucesso!")
+                    col_info1, col_info2, col_info3 = st.columns(3)
+                    with col_info1:
+                        st.metric("👨‍🎓 Total de Alunos", resultado["total_alunos"])
+                    with col_info2:
+                        st.metric("🎓 Turmas", len(resultado["turmas_incluidas"]))
+                    with col_info3:
+                        st.metric("📋 Campos", len(resultado["campos_selecionados"]))
+
+                    if os.path.exists(resultado["arquivo"]):
+                        with open(resultado["arquivo"], "rb") as file:
+                            st.download_button(
+                                label="📥 Baixar Relatório (.docx)",
+                                data=file.read(),
+                                file_name=resultado["nome_arquivo"],
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                type="primary",
+                                use_container_width=True
+                            )
+                    adicionar_historico("Geração de Relatório Pedagógico", resultado)
                 else:
-                    # Combinar campos selecionados
-                    todos_campos = campos_aluno_selecionados + campos_responsavel_selecionados
-                    
-                    # Configuração do relatório
-                    configuracao = {
-                        'turmas_selecionadas': turmas_selecionadas_ped,
-                        'campos_selecionados': todos_campos
-                    }
-                    
-                    # Gerar relatório
-                    with st.spinner("🤖 Gerando relatório pedagógico..."):
-                        resultado = gerar_relatorio_interface('pedagogico', configuracao)
-                    
-                    if resultado.get("success"):
-                        st.success("✅ Relatório gerado com sucesso!")
-                        
-                        # Informações do relatório
-                        col_info1, col_info2, col_info3 = st.columns(3)
-                        
-                        with col_info1:
-                            st.metric("👨‍🎓 Total de Alunos", resultado["total_alunos"])
-                        
-                        with col_info2:
-                            st.metric("🎓 Turmas", len(resultado["turmas_incluidas"]))
-                        
-                        with col_info3:
-                            st.metric("📋 Campos", len(resultado["campos_selecionados"]))
-                        
-                        # Botão de download
-                        if os.path.exists(resultado["arquivo"]):
-                            with open(resultado["arquivo"], "rb") as file:
-                                st.download_button(
-                                    label="📥 Baixar Relatório (.docx)",
-                                    data=file.read(),
-                                    file_name=resultado["nome_arquivo"],
-                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                    type="primary",
-                                    use_container_width=True
-                                )
-                        
-                        # Salvar no histórico
-                        adicionar_historico("Geração de Relatório Pedagógico", resultado)
-                    
-                    else:
-                        st.error(f"❌ Erro na geração: {resultado.get('error')}")
+                    st.error(f"❌ Erro na geração: {resultado.get('error')}")
         
         # ==========================================================
         # RELATÓRIO FINANCEIRO
@@ -1426,8 +1432,21 @@ def main():
                     for campo, descricao in campos_disponiveis["aluno"].items():
                         if st.checkbox(descricao, key=f"fin_aluno_{campo}", value=(campo == 'nome')):
                             campos_aluno_fin.append(campo)
+                    
+                    # Se o campo "situacao" foi selecionado, exibir filtro
+                    if "situacao" in campos_aluno_fin:
+                        situacoes_fin = st.multiselect(
+                            "🔍 Filtrar Situação:",
+                            ["matriculado", "trancado", "problema"],
+                            default=["matriculado", "trancado", "problema"],
+                            key="fin_situacoes"
+                        )
+                    else:
+                        # default: todas
+                        situacoes_fin = ["matriculado", "trancado", "problema"]
                 else:
                     campos_aluno_fin = []
+                    situacoes_fin = ["matriculado", "trancado", "problema"]
             
             with col_basic2:
                 st.markdown("**👥 Dados do Responsável:**")
@@ -1458,10 +1477,14 @@ def main():
                         status_mensalidades.append("A vencer")
                     
                     if st.checkbox("✅ Mensalidades pagas", key="status_mens_pagas"):
-                        status_mensalidades.append("Pago")
+                        # Incluir todos os status que representam "pago"
+                        status_mensalidades.extend(["Pago", "Baixado", "Pago parcial"])
                     
-                    if st.checkbox("⚠️ Mensalidades em atraso", key="status_mens_atraso"):
-                        status_mensalidades.append("Atrasado")  # Status correto no banco de dados
+                    if st.checkbox("⚠️ Mensalidades atrasadas", key="status_mens_atraso"):
+                        status_mensalidades.append("Atrasado")
+                    
+                    if st.checkbox("❌ Mensalidades canceladas", key="status_mens_canceladas"):
+                        status_mensalidades.append("Cancelado")
                     
                     # Campos específicos para mensalidades
                     st.markdown("**Campos das Mensalidades:**")
@@ -1565,10 +1588,12 @@ def main():
                     st.markdown("**📊 Tipos de Mensalidades:**")
                     if "A vencer" in status_mensalidades:
                         st.write("• 📅 Mensalidades a vencer")
-                    if "Pago" in status_mensalidades:
-                        st.write("• ✅ Mensalidades pagas")
+                    if any(status in status_mensalidades for status in ["Pago", "Baixado", "Pago parcial"]):
+                        st.write("• ✅ Mensalidades pagas (Pago, Baixado, Pago parcial)")
                     if "Atrasado" in status_mensalidades:
-                        st.write("• ⚠️ Mensalidades em atraso")
+                        st.write("• ⚠️ Mensalidades atrasadas")
+                    if "Cancelado" in status_mensalidades:
+                        st.write("• ❌ Mensalidades canceladas")
                     if not status_mensalidades:
                         st.write("• ⚠️ Nenhum tipo selecionado")
                 
@@ -1612,6 +1637,10 @@ def main():
                     if incluir_extrato:
                         filtros['extrato_pix_processados'] = incluir_processados
                         filtros['extrato_pix_nao_processados'] = incluir_nao_processados
+                    
+                    # Adicionar filtro de situação se campos de aluno foram incluídos
+                    if campos_aluno_fin and "situacao" in campos_aluno_fin:
+                        filtros['situacoes_filtradas'] = situacoes_fin
                     
                     # Configuração do relatório
                     configuracao = {

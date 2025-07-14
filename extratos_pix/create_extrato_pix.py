@@ -13,7 +13,7 @@ from supabase import create_client
 load_dotenv()
 sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-CSV_PATH   = "recebimentos_04_07_07_07.csv"
+CSV_PATH   = "C:/Users/arthu/OneDrive/Desktop/supabase-py/extratos_pix/recebimentos_unificados.csv"
 TABLE_NAME = "extrato_pix"
 BATCH      = 500          # lote de inserção
 

@@ -60,7 +60,9 @@ CAMPOS_ALUNO = {
     'data_nascimento': 'Data de Nascimento',
     'dia_vencimento': 'Dia de Vencimento',
     'data_matricula': 'Data de Matrícula',
-    'valor_mensalidade': 'Valor da Mensalidade'
+    'valor_mensalidade': 'Valor da Mensalidade',
+    'situacao': 'Situação',
+    'mensalidades_geradas': 'Mensalidades geradas?'
 }
 
 CAMPOS_RESPONSAVEL = {
@@ -79,6 +81,7 @@ CAMPOS_MENSALIDADE = {
     'valor': 'Valor',
     'status': 'Status',
     'data_pagamento': 'Data de Pagamento',
+    'valor_pago': 'Valor Pago',
     'observacoes': 'Observações'
 }
 
@@ -116,84 +119,108 @@ Lista de Alunos
 
 Berçário
 1.	Alice Nascimento Rafael
-Turno: Integral
-Data de Matrícula: 24/01/2025
-Dia de Vencimento: 5
-Valor Mensalidade: R$ 990,00
+Situação: Matriculado
 Responsável Financeiro:
 Nome: Mayra Ferreira Nascimento
-CPF: 075.046.734-71
-Tipo de relação: Mãe
-Contato: (83) 99631-0062
-Email: ferreiramayra73@gmail.com
-Responsável 2
-Nome: Itiel Rafael Figueredo Santos
-CPF: AUSENTE
-Tipo de relação: Pai
-Contato: (83) 99654-6308
-Email: AUSENTE
 **OBSERVAÇÃO:**
 
-2.	Ian Duarte Rolim
-Turno: Tarde
-Data de Matrícula: 26/12/2024
-Dia de Vencimento: 5
-Valor Mensalidade: R$ 705,00
+2.	Ian Duarte Rolim  
+Situação: Trancado
+Data de Saída: 15/01/2025
+Motivo de Saída: Mudança de cidade
 Responsável Financeiro:
 Nome: Pedro Henrique Rolim de Oliveira
-CPF: 084.085.394-77
-Tipo de relação: Pai
-Contato: AUSENTE
-Email: AUSENTE
-Responsável 2
-Nome: Kamila Duarte de Sousa
-CPF: AUSENTE
-Tipo de relação: Mãe
-Contato: AUSENTE
-Email: AUSENTE
 **OBSERVAÇÃO:**
 """
             
             prompt = f"""
 Você é um assistente especializado em relatórios pedagógicos para escolas brasileiras.
 
-INSTRUÇÕES ESPECÍFICAS:
-1. Use EXATAMENTE o formato do exemplo abaixo
-2. Organize por turma, depois por aluno numerado
-3. Para valores que são realmente NULL, None, vazios ou "Não informado", use "AUSENTE"
-4. NÃO use "AUSENTE" se o valor existe no banco de dados - apenas para campos realmente vazios
-5. Formate datas como DD/MM/YYYY
-6. Formate valores monetários como R$ X.XXX,XX
-7. Liste responsáveis como "Responsável Financeiro" primeiro, depois "Responsável 2, 3..." 
-8. SEMPRE inclua "**OBSERVAÇÃO:**" em negrito após o último responsável de cada aluno
-9. Mantenha formatação limpa e profissional
-10. Use apenas os campos selecionados: {', '.join(campos_selecionados)}
+DADOS RECEBIDOS:
+{dados_brutos}
+
+INSTRUÇÕES CRÍTICAS - CAMPOS SELECIONADOS:
+RESPEITE RIGOROSAMENTE: Use APENAS os campos selecionados: {', '.join(campos_selecionados)}
+
+CAMPOS DISPONÍVEIS E SEUS NOMES:
+ALUNO:
+- nome → "Nome do Aluno"
+- turno → "Turno" 
+- data_nascimento → "Data de Nascimento"
+- dia_vencimento → "Dia de Vencimento"
+- data_matricula → "Data de Matrícula"
+- valor_mensalidade → "Valor da Mensalidade"
+- situacao → "Situação"
+- mensalidades_geradas → "Mensalidades geradas?"
+- data_saida → "Data de Saída" (APENAS se situacao = trancado)
+- motivo_saida → "Motivo de Saída" (APENAS se situacao = trancado)
+
+RESPONSÁVEL:
+- nome → "Nome do Responsável"
+- cpf → "CPF"
+- telefone → "Telefone/Contato"
+- email → "Email"
+- endereco → "Endereço"
+- tipo_relacao → "Tipo de Relação"
+- responsavel_financeiro → "Responsável Financeiro"
+
+REGRAS DE FORMATAÇÃO:
+1. **CAMPOS SELECIONADOS**: Use EXCLUSIVAMENTE os campos da lista: {', '.join(campos_selecionados)}
+2. **ORGANIZE POR TURMA**: Lista por turma, alunos numerados em ordem alfabética
+3. **CAMPOS VAZIOS**: Para valores NULL, None, vazios ou "Não informado":
+   - Use: **_____________** (sublinhado em negrito)
+   - NÃO use "AUSENTE"
+4. **FORMATAÇÃO DE DADOS**:
+   - Datas: DD/MM/YYYY 
+   - Valores: R$ X.XXX,XX
+   - Situação: Capitalize (Matriculado, Trancado, Problema)
+   - Booleanos: "Sim" ou "Não" (mensalidades_geradas, responsavel_financeiro)
+5. **CAMPOS ESPECIAIS PARA TRANCADOS**:
+   - Se situacao = "trancado" E campos data_saida/motivo_saida foram selecionados → inclua esses campos
+   - Se situacao ≠ "trancado" → NÃO inclua data_saida/motivo_saida mesmo se selecionados
+6. **RESPONSÁVEIS**:
+   - Responsável Financeiro primeiro (se campo selecionado)
+   - Outros responsáveis como "Responsável 2, 3..." (se campos selecionados)
+   - Inclua APENAS os campos de responsável que foram selecionados
+7. **OBSERVAÇÃO**:
+   - Inclua "**OBSERVAÇÃO:**" APENAS se houver observações reais para o aluno
+   - Se não há observações, NÃO inclua a seção OBSERVAÇÃO
+8. **FORMATO DE SAÍDA**:
+   - Use ** para negrito
+   - Use ** para campos vazios: **_______________**
 
 EXEMPLO DE FORMATO:
 {exemplo_formato}
 
-DADOS PARA FORMATAÇÃO:
-{dados_brutos}
+CAMPOS SELECIONADOS A USAR: {', '.join(campos_selecionados)}
 
-Gere o relatório seguindo EXATAMENTE o padrão do exemplo, incluindo a seção OBSERVAÇÃO para cada aluno.
+IMPORTANTE: 
+- NÃO inclua campos não selecionados
+- NÃO use "AUSENTE" - use **_______________** para campos vazios
+- OBSERVAÇÃO só aparece se houver conteúdo real
+- Para alunos trancados, inclua data_saida/motivo_saida APENAS se foram selecionados
+
+Gere o relatório seguindo EXATAMENTE essas regras.
 """
         else:  # financeiro
-            # Determinar se é um relatório focado em mensalidades
+            # NOVA IMPLEMENTAÇÃO: Relatórios financeiros organizados por status
+            status_selecionados = dados_brutos.get('filtros_aplicados', {}).get('status_mensalidades', [])
+            tem_campos_responsavel = any(campo in CAMPOS_RESPONSAVEL for campo in campos_selecionados)
+            tem_campos_aluno = any(campo in CAMPOS_ALUNO for campo in campos_selecionados)
             tem_campos_mensalidade = any(campo in CAMPOS_MENSALIDADE for campo in campos_selecionados)
             
-            if tem_campos_mensalidade:
-                # Verificar se também há campos de responsáveis selecionados
-                tem_campos_responsavel = any(campo in CAMPOS_RESPONSAVEL for campo in campos_selecionados)
-                
-                if tem_campos_responsavel:
-                    # Relatório de mensalidades COM dados dos responsáveis
-                    exemplo_mensalidades = """
-# Relatório de Mensalidades em Atraso
-
-**Data de Geração:** 07/07/2025
-
-## Mensalidades por Aluno
-
+            # Mapear status para seções - CRÍTICO: 4 seções distintas
+            secoes_status = {
+                'A vencer': 'MENSALIDADES A VENCER',
+                'Pago': 'MENSALIDADES PAGAS',
+                'Baixado': 'MENSALIDADES PAGAS', 
+                'Pago parcial': 'MENSALIDADES PAGAS',
+                'Atrasado': 'MENSALIDADES ATRASADAS',
+                'Cancelado': 'MENSALIDADES CANCELADAS'
+            }
+            
+            # Exemplo com múltiplas seções organizadas
+            exemplo_financeiro = """
 ### 1. Alice Nascimento Rafael - Berçário
 **Responsáveis:**
 💰 **Responsável Financeiro:** Mayra Ferreira Nascimento
@@ -201,158 +228,139 @@ Gere o relatório seguindo EXATAMENTE o padrão do exemplo, incluindo a seção 
    **Email:** ferreiramayra73@gmail.com
 👤 **Responsável 2:** Itiel Rafael Figueredo Santos  
    **Telefone:** (83) 99654-6308
-   **Email:** AUSENTE
-**MENSALIDADES EM ABERTO**
-1. **Mês de Referência:** Abril/2025
-   **Data de Vencimento:** 30/04/2025
-   **Valor:** R$ 990,00
-2. **Mês de Referência:** Maio/2025
-   **Data de Vencimento:** 30/05/2025
-   **Valor:** R$ 990,00
+   **Email:** **_______________**
+
+**MENSALIDADES PAGAS**
+1. **Mês de Referência:** Fevereiro/2025  
+   **Data de Vencimento:** 05/02/2025  
+   **Data de pagamento:** 05/02/2025
+   **Valor mensalidade:** R$ 990,00  
+   **Valor pago:** R$ 990,00   
+2. **Mês de Referência:** Março/2025  
+   **Data de Vencimento:** 05/03/2025  
+   **Data de pagamento:** 10/03/2025
+   **Valor mensalidade:** R$ 990,00  
+   **Valor pago:** R$ 990,00   
+
+**MENSALIDADES A VENCER**
+1. **Mês de Referência:** Agosto/2025  
+   **Data de Vencimento:** 05/08/2025  
+   **Valor:** R$ 990,00  
+2. **Mês de Referência:** Setembro/2025  
+   **Data de Vencimento:** 05/09/2025  
+   **Valor:** R$ 990,00  
 
 ---
 
-### 2. Ian Duarte Rolim - Infantil I
+### 2. João Silva - Infantil I
 **Responsáveis:**
-💰 **Responsável Financeiro:** Pedro Henrique Rolim de Oliveira
-   **Telefone:** AUSENTE
-   **Email:** AUSENTE
-👤 **Responsável 2:** Kamila Duarte de Sousa
-   **Telefone:** AUSENTE
-   **Email:** AUSENTE
-**MENSALIDADES EM ABERTO**
-1. **Mês de Referência:** Março/2025
-   **Data de Vencimento:** 05/03/2025
-   **Valor:** R$ 705,00
+💰 **Responsável Financeiro:** Maria Silva
+   **Telefone:** (83) 99999-9999
+
+**MENSALIDADES:** NÃO GERADAS
 
 ---
 """
-                    
-                    prompt = f"""
-Você é um assistente especializado em relatórios de mensalidades com dados dos responsáveis para escolas brasileiras.
+            
+            prompt = f"""
+Você é um assistente especializado em relatórios financeiros organizados por status de mensalidades.
 
-DADOS PARA PROCESSAMENTO:
-- Total de alunos: {len(dados_brutos.get('alunos', []))} (já filtrados para ter mensalidades)
-- Total de mensalidades: {len(dados_brutos.get('mensalidades', []))} (apenas status: {dados_brutos.get('filtros_aplicados', {}).get('status_mensalidades', [])})
-- Ordem das turmas: {dados_brutos.get('filtros_aplicados', {}).get('turmas_selecionadas', [])}
-
-INSTRUÇÕES CRÍTICAS DE ORGANIZAÇÃO:
-1. RESPEITE A ORDEM DOS ALUNOS: Os alunos já estão organizados na sequência correta:
-   - Primeiro por ordem das turmas selecionadas
-   - Dentro de cada turma, por ordem alfabética
-2. CADA ALUNO APARECE APENAS UMA VEZ - elimine qualquer duplicação
-3. Para cada aluno, estruture assim:
-   - Cabeçalho: "### N. [Nome do Aluno] - [Turma]" 
-   - **TODOS OS RESPONSÁVEIS** com suas informações completas:
-     * Use 💰 para responsáveis financeiros
-     * Use 👤 para outros responsáveis
-     * Inclua TODOS os campos selecionados de responsável para CADA responsável
-   - Seção "MENSALIDADES EM ABERTO" com todas as mensalidades deste aluno
-4. Ordene mensalidades de cada aluno por data de vencimento (mais antiga primeiro)
-5. Use "AUSENTE" apenas para valores realmente NULL/None/vazios
-6. Formate: datas DD/MM/YYYY, valores R$ X.XXX,XX
-7. Use ** para textos em negrito
-8. Separe alunos com "---"
-
-IMPORTANTE - TODOS OS RESPONSÁVEIS:
-- Não inclua apenas um responsável - inclua TODOS os responsáveis do aluno
-- Para cada responsável, inclua TODOS os campos selecionados
-- Responsáveis financeiros primeiro (💰), depois outros (👤)
-- Use apenas os dados fornecidos
-
-CAMPOS SELECIONADOS: {', '.join(campos_selecionados)}
-
-EXEMPLO DE FORMATO:
-{exemplo_mensalidades}
-
-ALUNOS ORGANIZADOS (com TODOS os responsáveis):
-{[{
-    'nome': aluno.get('nome'),
-    'turma': aluno.get('turma_nome'),
-    'id': aluno.get('id'),
-    'responsaveis': aluno.get('responsaveis', [])
-} for aluno in dados_brutos.get('alunos', [])]}
-
-MENSALIDADES (agrupar por id_aluno):
-{dados_brutos.get('mensalidades', [])}
-
-CRÍTICO: 
-- Use a ordem EXATA dos alunos fornecida
-- Inclua TODOS os responsáveis de cada aluno
-- Agrupe todas as mensalidades por aluno
-- Não duplique informações
-"""
-                else:
-                    # Relatório específico APENAS de mensalidades (sem responsáveis)
-                    exemplo_mensalidades = """
-# Relatório de Mensalidades em Atraso
-
-**Data de Geração:** 07/07/2025
-
-## Mensalidades por Aluno
-
-### 1. Alice Nascimento Rafael - Berçário
-**Mês de Referência:** 04/2025
-**Valor:** R$ 990,00  
-**Data de Vencimento:** 30/04/2025
-**Status:** Atrasado
-
----
-
-### 2. Ian Duarte Rolim - Infantil I
-**Mês de Referência:** 03/2025
-**Valor:** R$ 705,00
-**Data de Vencimento:** 05/03/2025  
-**Status:** Atrasado
-
----
-"""
-                    
-                    prompt = f"""
-Você é um assistente especializado em relatórios de mensalidades para escolas brasileiras.
-
-INSTRUÇÕES ESPECÍFICAS:
-1. Este é um relatório focado EXCLUSIVAMENTE em MENSALIDADES
-2. NÃO inclua dados dos alunos ou responsáveis - APENAS dados das mensalidades
-3. Organize por aluno, mostrando as mensalidades de cada um
-4. Para cada mensalidade, mostre APENAS os campos selecionados: {', '.join(campos_selecionados)}
-5. Para valores NULL, None ou vazios, use "AUSENTE"
-6. Formate datas como DD/MM/YYYY
-7. Formate valores monetários como R$ X.XXX,XX
-8. Use o formato do exemplo abaixo
-9. Se não houver mensalidades para um aluno, NÃO inclua o aluno no relatório
-10. Inclua o nome da turma após o nome do aluno
-
-EXEMPLO DE FORMATO:
-{exemplo_mensalidades}
-
-CAMPOS SELECIONADOS (use APENAS estes): {', '.join(campos_selecionados)}
-
-DADOS PARA FORMATAÇÃO:
-Alunos: {dados_brutos.get('alunos', [])}
-Mensalidades: {dados_brutos.get('mensalidades', [])}
-Filtros aplicados: {dados_brutos.get('filtros_aplicados', {})}
-
-IMPORTANTE: Foque APENAS nas mensalidades filtradas. Ignore dados irrelevantes dos alunos como telefone, endereço, etc.
-"""
-            else:
-                # Relatório financeiro geral
-                prompt = f"""
-Você é um assistente especializado em relatórios financeiros para escolas brasileiras.
-
-INSTRUÇÕES ESPECÍFICAS:
-1. Organize os dados de forma clara e estruturada
-2. Para valores NULL, None ou vazios, use "AUSENTE"  
-3. Formate datas como DD/MM/YYYY
-4. Formate valores monetários como R$ X.XXX,XX
-5. Agrupe informações relacionadas logicamente
-6. Inclua subtotais quando relevante
-7. Use apenas os campos selecionados: {', '.join(campos_selecionados)}
-
-DADOS PARA FORMATAÇÃO:
+DADOS RECEBIDOS:
 {dados_brutos}
 
-Gere um relatório financeiro detalhado e bem estruturado.
+INSTRUÇÕES CRÍTICAS - CAMPOS SELECIONADOS:
+RESPEITE RIGOROSAMENTE: Use APENAS os campos selecionados: {', '.join(campos_selecionados)}
+
+CAMPOS DISPONÍVEIS E SEUS NOMES:
+ALUNO:
+- nome → "Nome do Aluno"
+- turno → "Turno" 
+- data_nascimento → "Data de Nascimento"
+- dia_vencimento → "Dia de Vencimento"
+- data_matricula → "Data de Matrícula"
+- valor_mensalidade → "Valor da Mensalidade"
+- situacao → "Situação"
+- mensalidades_geradas → "Mensalidades geradas?"
+
+RESPONSÁVEL:
+- nome → "Nome do Responsável"
+- cpf → "CPF"
+- telefone → "Telefone/Contato"
+- email → "Email"
+- endereco → "Endereço"
+- tipo_relacao → "Tipo de Relação"
+- responsavel_financeiro → "Responsável Financeiro"
+
+MENSALIDADE:
+- mes_referencia → "Mês de Referência"
+- data_vencimento → "Data de Vencimento"
+- valor → "Valor"
+- status → "Status"
+- data_pagamento → "Data de Pagamento"
+- valor_pago → "Valor Pago"
+- observacoes → "Observações"
+
+MAPEAMENTO DE STATUS PARA SEÇÕES (OBRIGATÓRIO - 4 SEÇÕES DISTINTAS):
+- "A vencer" → MENSALIDADES A VENCER
+- "Pago", "Baixado", "Pago parcial" → MENSALIDADES PAGAS  
+- "Atrasado" → MENSALIDADES ATRASADAS
+- "Cancelado" → MENSALIDADES CANCELADAS
+
+CRÍTICO: Se status "Pago parcial" existe, DEVE aparecer na seção MENSALIDADES PAGAS
+
+REGRAS DE FORMATAÇÃO POR SEÇÃO:
+
+**PARA MENSALIDADES PAGAS:**
+- SEMPRE inclua: Mês de Referência, Data de Vencimento, Data de pagamento, Valor mensalidade, Valor pago
+- Formato da data de pagamento: DD/MM/YYYY
+- Se data de pagamento for NULL: **_______________**
+- Se valor pago for diferente do valor mensalidade, mostre ambos
+
+**PARA OUTRAS SEÇÕES (A vencer, Atrasadas, Canceladas):**
+- Inclua: Mês de Referência, Data de Vencimento, Valor
+- Formato padrão sem data de pagamento
+
+REGRAS DE ORGANIZAÇÃO:
+1. **CADA ALUNO APARECE UMA VEZ** com cabeçalho: "### N. [Nome do Aluno] - [Turma]"
+2. **CAMPOS DO ALUNO E RESPONSÁVEIS:** Inclua APENAS os campos selecionados pelo usuário
+3. **SEÇÕES DE MENSALIDADES:** 
+   - Aparecem APENAS se o status foi selecionado E o aluno tem mensalidades desse status
+   - Se nenhuma mensalidade dos tipos selecionados: mostre "**MENSALIDADES:** NÃO GERADAS"
+4. **ORDEM DAS SEÇÕES:** PAGAS → A VENCER → ATRASADAS → CANCELADAS
+5. **ALUNOS SEM MENSALIDADES:** Mostre "**MENSALIDADES:** NÃO GERADAS"
+6. **CAMPOS VAZIOS:** Use **_______________** para NULL/None/vazios (não "AUSENTE")
+7. **FORMATAÇÃO:** 
+   - Datas: DD/MM/YYYY
+   - Valores: R$ X.XXX,XX  
+   - Booleanos: "Sim" ou "Não"
+   - Use ** para negrito
+8. **SEPARAÇÃO:** Use "---" entre alunos
+9. **RESPONSÁVEIS:**
+   - Use 💰 para responsáveis financeiros
+   - Use 👤 para outros responsáveis
+   - Inclua TODOS os responsáveis do aluno
+   - Para cada responsável, inclua TODOS os campos selecionados
+
+STATUS SELECIONADOS: {status_selecionados}
+CAMPOS SELECIONADOS: {', '.join(campos_selecionados)}
+
+ATENÇÃO CRÍTICA: 
+- Cada aluno aparece UMA ÚNICA VEZ no relatório
+- Use EXCLUSIVAMENTE os dados fornecidos (não invente nomes ou informações)
+- Aplique os filtros de status RIGOROSAMENTE
+- Se aluno não tem mensalidades dos status selecionados: "MENSALIDADES: NÃO GERADAS"
+
+EXEMPLO DE FORMATO:
+{exemplo_financeiro}
+
+IMPORTANTE:
+- Ordene mensalidades por data de vencimento (mais antiga primeiro) dentro de cada seção
+- Para mensalidades pagas, SEMPRE inclua data de pagamento e valor pago (campos obrigatórios dessa seção)
+- Respeite filtros de período aplicados
+- Se aluno foi incluído mas não tem mensalidades dos status selecionados, mostre "MENSALIDADES: NÃO GERADAS"
+- Use a ordem EXATA dos alunos fornecida
+
+Gere o relatório seguindo EXATAMENTE essas regras.
 """
         
         response = openai_client.chat.completions.create(
@@ -361,7 +369,7 @@ Gere um relatório financeiro detalhado e bem estruturado.
                 {"role": "system", "content": "Você é um assistente especializado em geração de relatórios educacionais profissionais em português brasileiro."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=20000,
+            max_tokens=16384,
             temperature=0.1
         )
         
@@ -396,6 +404,8 @@ def formatar_relatorio_basico(dados_brutos: Dict, tipo_relatorio: str, campos_se
                             valor = 'AUSENTE'
                         elif campo == 'valor_mensalidade' and valor != 'AUSENTE':
                             valor = f"R$ {float(valor):,.2f}"
+                        elif campo == 'mensalidades_geradas' and valor != 'AUSENTE':
+                            valor = 'Sim' if valor else 'Não'
                         elif 'data' in campo and valor != 'AUSENTE':
                             try:
                                 data_obj = datetime.strptime(str(valor), '%Y-%m-%d')
@@ -480,6 +490,8 @@ def formatar_relatorio_basico(dados_brutos: Dict, tipo_relatorio: str, campos_se
                             valor = 'AUSENTE'
                         elif campo == 'valor_mensalidade' and valor != 'AUSENTE':
                             valor = f"R$ {float(valor):,.2f}"
+                        elif campo == 'mensalidades_geradas' and valor != 'AUSENTE':
+                            valor = 'Sim' if valor else 'Não'
                         elif 'data' in campo and valor != 'AUSENTE':
                             try:
                                 data_obj = datetime.strptime(str(valor), '%Y-%m-%d')
@@ -603,11 +615,21 @@ def formatar_relatorio_basico(dados_brutos: Dict, tipo_relatorio: str, campos_se
 # 📊 FUNÇÕES DE COLETA DE DADOS
 # ==========================================================
 
-def coletar_dados_pedagogicos(turmas_selecionadas: List[str], campos_selecionados: List[str]) -> Dict:
+def coletar_dados_pedagogicos(turmas_selecionadas: List[str], campos_selecionados: List[str], 
+                             situacoes_filtradas: List[str] = None) -> Dict:
     """
     Coleta dados pedagógicos conforme os filtros selecionados
+    
+    Args:
+        turmas_selecionadas: Lista de nomes das turmas
+        campos_selecionados: Lista de campos selecionados pelo usuário
+        situacoes_filtradas: Lista de situações para filtrar ['matriculado', 'trancado', 'problema']
     """
     try:
+        # Se não especificado, incluir todas as situações
+        if not situacoes_filtradas:
+            situacoes_filtradas = ["matriculado", "trancado", "problema"]
+        
         # Obter IDs das turmas
         mapeamento_resultado = obter_mapeamento_turmas()
         if not mapeamento_resultado.get("success"):
@@ -621,26 +643,79 @@ def coletar_dados_pedagogicos(turmas_selecionadas: List[str], campos_selecionado
         if not ids_turmas:
             return {"success": False, "error": "Nenhuma turma válida selecionada"}
         
-        # Buscar alunos das turmas selecionadas
-        resultado_alunos = buscar_alunos_por_turmas(ids_turmas)
-        if not resultado_alunos.get("success"):
-            return {"success": False, "error": f"Erro ao buscar alunos: {resultado_alunos.get('error')}"}
-        
+        # NOVA IMPLEMENTAÇÃO: Buscar alunos COM FILTRO DE SITUAÇÃO
         dados_organizados = {
             "success": True,
             "dados_por_turma": {},
-            "total_alunos": resultado_alunos.get("total_alunos", 0),
+            "total_alunos": 0,
             "turmas_incluidas": turmas_selecionadas,
             "campos_selecionados": campos_selecionados,
+            "situacoes_filtradas": situacoes_filtradas,
             "data_geracao": datetime.now().isoformat()
         }
         
-        # Organizar dados por turma
-        for turma_nome, dados_turma in resultado_alunos.get("alunos_por_turma", {}).items():
+        # Para cada turma, buscar alunos aplicando filtros
+        for turma_nome in turmas_selecionadas:
+            # Buscar alunos da turma COM filtro de situação
+            alunos_response = supabase.table("alunos").select("""
+                id, nome, turno, data_nascimento, dia_vencimento, 
+                data_matricula, valor_mensalidade, situacao, data_saida, motivo_saida, 
+                mensalidades_geradas, turmas!inner(nome_turma)
+            """).eq("turmas.nome_turma", turma_nome).in_("situacao", situacoes_filtradas).execute()
+            
+            if not alunos_response.data:
+                # Turma sem alunos ou sem alunos na situação filtrada
+                dados_organizados["dados_por_turma"][turma_nome] = {
+                    "alunos": [],
+                    "total_alunos": 0
+                }
+                continue
+            
+            # Ordenar alunos por nome (ordem alfabética)
+            alunos_ordenados = sorted(alunos_response.data, key=lambda x: x.get('nome', ''))
+            
+            alunos_turma = []
+            for aluno_data in alunos_ordenados:
+                # Buscar responsáveis do aluno
+                responsaveis_response = supabase.table("alunos_responsaveis").select("""
+                    tipo_relacao, responsavel_financeiro,
+                    responsaveis!inner(id, nome, cpf, telefone, email, endereco)
+                """).eq("id_aluno", aluno_data["id"]).execute()
+                
+                # Organizar responsáveis
+                responsaveis = []
+                for vinculo in responsaveis_response.data:
+                    resp_data = vinculo["responsaveis"]
+                    resp_data.update({
+                        "tipo_relacao": vinculo["tipo_relacao"],
+                        "responsavel_financeiro": vinculo["responsavel_financeiro"]
+                    })
+                    responsaveis.append(resp_data)
+                
+                # Formatear dados do aluno incluindo novos campos
+                aluno_formatado = {
+                    "id": aluno_data["id"],
+                    "nome": aluno_data["nome"],
+                    "turno": aluno_data.get("turno"),
+                    "data_nascimento": aluno_data.get("data_nascimento"),
+                    "dia_vencimento": aluno_data.get("dia_vencimento"),
+                    "data_matricula": aluno_data.get("data_matricula"),
+                    "valor_mensalidade": aluno_data.get("valor_mensalidade"),
+                    "situacao": aluno_data.get("situacao", "matriculado"),
+                    "mensalidades_geradas": aluno_data.get("mensalidades_geradas", False),
+                    "data_saida": aluno_data.get("data_saida"),
+                    "motivo_saida": aluno_data.get("motivo_saida"),
+                    "turma_nome": turma_nome,
+                    "responsaveis": responsaveis
+                }
+                
+                alunos_turma.append(aluno_formatado)
+            
             dados_organizados["dados_por_turma"][turma_nome] = {
-                "alunos": dados_turma.get("alunos", []),
-                "total_alunos": len(dados_turma.get("alunos", []))
+                "alunos": alunos_turma,
+                "total_alunos": len(alunos_turma)
             }
+            dados_organizados["total_alunos"] += len(alunos_turma)
         
         return dados_organizados
     
@@ -651,6 +726,7 @@ def coletar_dados_financeiros(turmas_selecionadas: List[str], campos_selecionado
                              filtros: Dict) -> Dict:
     """
     Coleta dados financeiros conforme os filtros selecionados
+    Inclui filtro de situação dos alunos
     """
     try:
         # PRIMEIRO: Atualizar status das mensalidades automaticamente
@@ -678,10 +754,13 @@ def coletar_dados_financeiros(turmas_selecionadas: List[str], campos_selecionado
         }
         
         # ETAPA 2: Para cada turma selecionada, buscar alunos em ordem alfabética
+        # Aplicar filtro de situação se especificado
+        situacoes_filtradas = filtros.get('situacoes_filtradas', ["matriculado", "trancado", "problema"])
+        
         for turma_nome in turmas_selecionadas:
             alunos_response = supabase.table("alunos").select("""
                 *, turmas!inner(nome_turma)
-            """).eq("turmas.nome_turma", turma_nome).execute()
+            """).eq("turmas.nome_turma", turma_nome).in_("situacao", situacoes_filtradas).execute()
             
             if alunos_response.data:
                 # Ordenar alunos por nome (ordem alfabética)
@@ -720,6 +799,7 @@ def coletar_dados_financeiros(turmas_selecionadas: List[str], campos_selecionado
             status_mensalidades = filtros.get('status_mensalidades', [])
             
             # CRÍTICO: Filtrar APENAS mensalidades com status especificado
+            # Buscar todos os campos incluindo valor_pago
             query = supabase.table("mensalidades").select("*").in_("id_aluno", ids_alunos)
             
             # APLICAR FILTROS OBRIGATÓRIOS
@@ -739,23 +819,47 @@ def coletar_dados_financeiros(turmas_selecionadas: List[str], campos_selecionado
             
             mensalidades_response = query.execute()
             
-            # ETAPA 4: Filtrar apenas alunos que tenham mensalidades com o status especificado
+            # NOVA LÓGICA: Manter TODOS os alunos, mas filtrar mensalidades por status
             mensalidades_encontradas = mensalidades_response.data
-            ids_alunos_com_mensalidades = set(m.get('id_aluno') for m in mensalidades_encontradas)
             
-            # Remover alunos que não têm mensalidades com o status especificado
-            dados_financeiros["alunos"] = [
-                aluno for aluno in dados_financeiros["alunos"] 
-                if aluno["id"] in ids_alunos_com_mensalidades
-            ]
+            # Organizar mensalidades por aluno e status para facilitar a IA
+            mensalidades_organizadas = {}
+            for m in mensalidades_encontradas:
+                id_aluno = m.get('id_aluno')
+                if id_aluno not in mensalidades_organizadas:
+                    mensalidades_organizadas[id_aluno] = {
+                        'A vencer': [],
+                        'Pago': [],
+                        'Baixado': [],
+                        'Pago parcial': [],
+                        'Atrasado': [],
+                        'Cancelado': []
+                    }
+                
+                status = m.get('status', 'A vencer')
+                # Agrupar status similares para "MENSALIDADES PAGAS"
+                if status in ['Pago', 'Baixado', 'Pago parcial']:
+                    # Adicionar à lista correspondente
+                    mensalidades_organizadas[id_aluno][status].append(m)
+                else:
+                    mensalidades_organizadas[id_aluno][status].append(m)
             
-            # Atualizar lista de IDs
-            ids_alunos = [aluno["id"] for aluno in dados_financeiros["alunos"]]
+            # Adicionar informações de mensalidades organizadas aos alunos
+            for aluno in dados_financeiros["alunos"]:
+                id_aluno = aluno["id"]
+                aluno["mensalidades_por_status"] = mensalidades_organizadas.get(id_aluno, {
+                    'A vencer': [], 'Pago': [], 'Baixado': [], 'Pago parcial': [], 'Atrasado': [], 'Cancelado': []
+                })
             
-            # Filtrar mensalidades apenas dos alunos que restaram
-            dados_financeiros["mensalidades"] = [
-                m for m in mensalidades_encontradas if m.get('id_aluno') in ids_alunos
-            ]
+            # Manter todas as mensalidades encontradas (não filtrar alunos)
+            dados_financeiros["mensalidades"] = mensalidades_encontradas
+        else:
+            # Se não há campos de mensalidade selecionados, manter alunos mas sem mensalidades
+            dados_financeiros["mensalidades"] = []
+            for aluno in dados_financeiros["alunos"]:
+                aluno["mensalidades_por_status"] = {
+                    'A vencer': [], 'Pago': [], 'Baixado': [], 'Pago parcial': [], 'Atrasado': [], 'Cancelado': []
+                }
         
         # Pagamentos - verificar se algum campo de pagamento foi selecionado
         campos_pagamento_selecionados = [campo for campo in campos_selecionados if campo in CAMPOS_PAGAMENTO]
@@ -872,22 +976,40 @@ def criar_documento_docx(titulo: str, conteudo: str) -> Optional[Document]:
 def processar_linha_com_negrito(paragrafo, texto: str):
     """
     Processa uma linha de texto, aplicando formatação em negrito para texto entre **
+    Inclui suporte especial para campos vazios formatados como **_______________**
     """
     import re
     
-    # Padrão para encontrar texto entre **
-    padrao = r'\*\*(.*?)\*\*'
+    # Primeiro processar campos vazios especiais **_______________**
+    padrao_vazio = r'\*\*(_+)\*\*'
     
-    # Dividir o texto em partes normais e em negrito
-    partes = re.split(padrao, texto)
+    # Dividir por campos vazios primeiro
+    partes_vazio = re.split(padrao_vazio, texto)
     
-    for i, parte in enumerate(partes):
-        if parte:  # Ignorar strings vazias
-            run = paragrafo.add_run(parte)
+    for i, parte_vazio in enumerate(partes_vazio):
+        if parte_vazio and parte_vazio.startswith('___'):
+            # É um campo vazio - criar run sublinhado em negrito e vermelho
+            run = paragrafo.add_run(parte_vazio)
+            run.bold = True
+            run.underline = True
+            # Definir cor vermelha (se suportado)
+            try:
+                from docx.shared import RGBColor
+                run.font.color.rgb = RGBColor(255, 0, 0)  # Vermelho
+            except:
+                pass  # Se não conseguir aplicar cor, continua sem
+        elif parte_vazio:
+            # Texto normal - processar padrão de negrito normal
+            padrao_negrito = r'\*\*(.*?)\*\*'
+            partes_negrito = re.split(padrao_negrito, parte_vazio)
             
-            # Se é uma parte ímpar, estava entre ** então deve ficar em negrito
-            if i % 2 == 1:
-                run.bold = True
+            for j, parte in enumerate(partes_negrito):
+                if parte:  # Ignorar strings vazias
+                    run = paragrafo.add_run(parte)
+                    
+                    # Se é uma parte ímpar, estava entre ** então deve ficar em negrito
+                    if j % 2 == 1:
+                        run.bold = True
 
 def salvar_documento_temporario(doc: Document, nome_arquivo: str) -> Optional[str]:
     """
@@ -913,9 +1035,15 @@ def salvar_documento_temporario(doc: Document, nome_arquivo: str) -> Optional[st
 # 🎯 FUNÇÕES PRINCIPAIS DE GERAÇÃO
 # ==========================================================
 
-def gerar_relatorio_pedagogico(turmas_selecionadas: List[str], campos_selecionados: List[str]) -> Dict:
+def gerar_relatorio_pedagogico(turmas_selecionadas: List[str], campos_selecionados: List[str], 
+                              situacoes_filtradas: List[str] = None) -> Dict:
     """
     Gera relatório pedagógico completo
+    
+    Args:
+        turmas_selecionadas: Lista de turmas para incluir
+        campos_selecionados: Lista de campos para exibir
+        situacoes_filtradas: Lista de situações para filtrar ['matriculado', 'trancado', 'problema']
     """
     try:
         if not DOCX_AVAILABLE:
@@ -924,8 +1052,8 @@ def gerar_relatorio_pedagogico(turmas_selecionadas: List[str], campos_selecionad
                 "error": "python-docx não disponível. Execute: pip install python-docx"
             }
         
-        # Coletar dados
-        dados = coletar_dados_pedagogicos(turmas_selecionadas, campos_selecionados)
+        # Coletar dados COM filtro de situação
+        dados = coletar_dados_pedagogicos(turmas_selecionadas, campos_selecionados, situacoes_filtradas)
         if not dados.get("success"):
             return dados
         
@@ -956,6 +1084,7 @@ def gerar_relatorio_pedagogico(turmas_selecionadas: List[str], campos_selecionad
             "total_alunos": dados["total_alunos"],
             "turmas_incluidas": dados["turmas_incluidas"],
             "campos_selecionados": dados["campos_selecionados"],
+            "situacoes_filtradas": dados["situacoes_filtradas"],
             "data_geracao": dados["data_geracao"]
         }
     
@@ -1084,7 +1213,8 @@ def gerar_relatorio_interface(tipo_relatorio: str, configuracao: Dict) -> Dict:
         
         # Gerar relatório conforme o tipo
         if tipo_relatorio == 'pedagogico':
-            return gerar_relatorio_pedagogico(turmas_selecionadas, campos_selecionados)
+            situacoes_filtradas = configuracao.get('situacoes_filtradas', [])
+            return gerar_relatorio_pedagogico(turmas_selecionadas, campos_selecionados, situacoes_filtradas)
         else:
             filtros = configuracao.get('filtros', {})
             return gerar_relatorio_financeiro(turmas_selecionadas, campos_selecionados, filtros)
